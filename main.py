@@ -166,7 +166,7 @@ class VoiceKeywordDetector:
         print("=" * 60)
 
         # 创建音频录制器
-        recorder = AudioRecorder(on_audio_callback=None)
+        recorder = AudioRecorder()
 
         try:
             # 启动录音

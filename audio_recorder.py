@@ -159,11 +159,11 @@ class AudioRecorder:
         self._stop_requested = True
         self.is_running = False
 
-        if self.stream:
+        if hasattr(self, 'stream') and self.stream:
             try:
                 self.stream.stop_stream()
                 self.stream.close()
-            except Exception as e:
+            except Exception:
                 # 忽略关闭时的错误
                 pass
             self.stream = None
@@ -172,7 +172,8 @@ class AudioRecorder:
 
     def cleanup(self):
         """清理资源"""
-        if self.stream:
+        # 使用 hasattr 检查属性是否存在（防止析构时错误）
+        if hasattr(self, 'stream') and self.stream:
             try:
                 self.stream.stop_stream()
                 self.stream.close()
@@ -180,15 +181,17 @@ class AudioRecorder:
                 pass
             self.stream = None
 
-        if self.pyaudio:
+        if hasattr(self, 'pyaudio') and self.pyaudio:
             try:
                 self.pyaudio.terminate()
-            except Exception as e:
+            except Exception:
                 pass
             self.pyaudio = None
 
-        self.is_running = False
-        self._stop_requested = True
+        if hasattr(self, 'is_running'):
+            self.is_running = False
+        if hasattr(self, '_stop_requested'):
+            self._stop_requested = True
 
     def list_devices(self):
         """列出所有可用的音频设备"""
