@@ -1,0 +1,41 @@
+{
+  "audio": {
+    "device_index": null,
+    "sample_rate": 16000,
+    "channels": 1,
+    "chunk_size": 1600,
+    "format": "paInt16"
+  },
+  "vad": {
+    "model_path": "./models/01-vad/ten-vad.onnx",
+    "threshold": 0.5,
+    "min_silence_duration": 0.5,
+    "min_speech_duration": 0.25,
+    "max_speech_duration": 30.0,
+    "buffer_size_seconds": 60,
+    "num_threads": 2
+  },
+  "asr": {
+    "model_dir": "./models/02-asr/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+    "model_file": "model.int8.onnx",
+    "tokens_file": "tokens.txt",
+    "language": "zh",
+    "use_itn": true,
+    "num_threads": 4
+  },
+  "keywords": [
+    "你好",
+    "帮助",
+    "紧急",
+    "救命"
+  ],
+  "output": {
+    "directory": "./detected_clips",
+    "buffer_seconds": 15,
+    "save_metadata": true
+  },
+  "logging": {
+    "level": "INFO",
+    "console": true
+  }
+}

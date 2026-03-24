@@ -1,0 +1,258 @@
+"""
+音频循环缓冲区模块
+实现固定大小的循环缓冲区，用于存储最近的音频数据
+支持按时间戳提取音频片段
+"""
+
+import numpy as np
+import wave
+import threading
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Tuple
+import json
+
+
+class AudioBuffer:
+    """音频循环缓冲区"""
+
+    def __init__(self, sample_rate: int = 16000, duration: int = 30):
+        """
+        初始化音频缓冲区
+
+        Args:
+            sample_rate: 采样率（Hz）
+            duration: 缓冲区时长（秒）
+        """
+        self.sample_rate = sample_rate
+        self.duration = duration
+        self.buffer_size = sample_rate * duration
+
+        # 音频数据缓冲区（float32，归一化到[-1, 1]）
+        self.buffer = np.zeros(self.buffer_size, dtype=np.float32)
+
+        # 时间戳缓冲区（记录每个采样点的时间戳）
+        self.timestamps = np.zeros(self.buffer_size, dtype=np.float64)
+
+        # 写入索引
+        self.write_index = 0
+
+        # 线程锁
+        self.lock = threading.Lock()
+
+        # 统计信息
+        self.total_samples = 0
+        self.is_filled = False
+
+    def append(self, samples: np.ndarray, timestamp: float) -> int:
+        """
+        向缓冲区追加音频数据
+
+        Args:
+            samples: 音频数据（float32 numpy数组）
+            timestamp: 当前时间戳（time.time()）
+
+        Returns:
+            实际写入的样本数
+        """
+        with self.lock:
+            num_samples = len(samples)
+
+            # 如果样本数超过缓冲区大小，只保留最后部分
+            if num_samples > self.buffer_size:
+                samples = samples[-self.buffer_size:]
+                num_samples = self.buffer_size
+
+            # 计算写入位置
+            end_index = self.write_index + num_samples
+
+            if end_index <= self.buffer_size:
+                # 不需要回绕
+                self.buffer[self.write_index:end_index] = samples
+                self.timestamps[self.write_index:end_index] = timestamp
+            else:
+                # 需要回绕
+                first_part = self.buffer_size - self.write_index
+                second_part = num_samples - first_part
+
+                self.buffer[self.write_index:] = samples[:first_part]
+                self.buffer[:second_part] = samples[first_part:]
+
+                # 时间���也分段写入
+                self.timestamps[self.write_index:] = timestamp
+                self.timestamps[:second_part] = timestamp
+
+            # 更新写入索引
+            self.write_index = (self.write_index + num_samples) % self.buffer_size
+            self.total_samples += num_samples
+
+            # 标记缓冲区已填满
+            if self.total_samples >= self.buffer_size:
+                self.is_filled = True
+
+            return num_samples
+
+    def get_window(self, center_timestamp: float, window_seconds: int = 30) -> Optional[np.ndarray]:
+        """
+        获取指定时间戳周围的音频窗口
+
+        Args:
+            center_timestamp: 中心时间戳
+            window_seconds: 窗口时长（秒），默认30秒
+
+        Returns:
+            音频数据（float32 numpy数组），如果无法获取则返回None
+        """
+        with self.lock:
+            if not self.is_filled:
+                # 缓冲区未填满，无法获取完整窗口
+                return None
+
+            window_samples = window_seconds * self.sample_rate
+            half_window = window_samples // 2
+
+            # 查找最接近中心时间戳的索引
+            time_diffs = np.abs(self.timestamps - center_timestamp)
+            center_idx = np.argmin(time_diffs)
+
+            # 计算窗口的起始和结束索引
+            start_idx = center_idx - half_window
+            end_idx = center_idx + half_window
+
+            # 处理循环缓冲区的索引
+            if start_idx < 0:
+                start_idx += self.buffer_size
+
+            if end_idx >= self.buffer_size:
+                end_idx -= self.buffer_size
+
+            # 提取音频数据
+            if start_idx < end_idx:
+                # 不需要回绕
+                return self.buffer[start_idx:end_idx].copy()
+            else:
+                # 需要回绕
+                first_part = self.buffer[start_idx:].copy()
+                second_part = self.buffer[:end_idx].copy()
+                return np.concatenate([first_part, second_part])
+
+    def get_recent(self, seconds: int = 30) -> Optional[np.ndarray]:
+        """
+        获取最近N秒的音频数据
+
+        Args:
+            seconds: 秒数
+
+        Returns:
+            音频数据（float32 numpy数组），如果数据不足则返回None
+        """
+        with self.lock:
+            if not self.is_filled:
+                # 缓冲区未填满
+                return None
+
+            num_samples = seconds * self.sample_rate
+            start_idx = (self.write_index - num_samples) % self.buffer_size
+
+            if start_idx < self.write_index:
+                return self.buffer[start_idx:self.write_index].copy()
+            else:
+                first_part = self.buffer[start_idx:].copy()
+                second_part = self.buffer[:self.write_index].copy()
+                return np.concatenate([first_part, second_part])
+
+    def save_to_wav(self, audio_data: np.ndarray, output_path: Path,
+                    metadata: Optional[dict] = None) -> None:
+        """
+        将音频数据保存为WAV文件
+
+        Args:
+            audio_data: 音频数据（float32 numpy数组，归一化到[-1, 1]）
+            output_path: 输出文件路径
+            metadata: 可选的元数据字典
+        """
+        # 确保输出目录存在
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 转换为int16 PCM格式
+        int16_data = (audio_data * 32767).astype(np.int16)
+
+        # 写入WAV文件
+        with wave.open(str(output_path), 'wb') as wf:
+            wf.setnchannels(1)  # 单声道
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(self.sample_rate)
+            wf.writeframes(int16_data.tobytes())
+
+        # 如果提供了元数据，保存为JSON文件
+        if metadata:
+            metadata_path = output_path.with_suffix('.json')
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+    def save_detected_clip(self, keyword: str, detected_at: float,
+                          output_dir: Path, save_metadata: bool = True) -> Tuple[Path, Optional[Path]]:
+        """
+        保存检测到的关键词音频片段
+
+        Args:
+            keyword: 检测到的关键词
+            detected_at: 检测到关键词的时间戳
+            output_dir: 输出目录
+            save_metadata: 是否保存元数据
+
+        Returns:
+            (wav文件路径, 元数据文件路径)
+        """
+        # 生成文件名
+        timestamp_str = datetime.fromtimestamp(detected_at).strftime("%Y%m%d_%H%M%S")
+        wav_filename = f"{keyword}_{timestamp_str}.wav"
+        wav_path = output_dir / wav_filename
+
+        # 获取30秒音频窗口
+        audio_data = self.get_window(detected_at, window_seconds=30)
+
+        if audio_data is None:
+            raise RuntimeError("无法从缓冲区获取音频数据")
+
+        # 准备元数据
+        metadata = None
+        if save_metadata:
+            metadata = {
+                "keyword": keyword,
+                "detected_at": datetime.fromtimestamp(detected_at).isoformat(),
+                "detected_timestamp": detected_at,
+                "duration": len(audio_data) / self.sample_rate,
+                "sample_rate": self.sample_rate,
+                "channels": 1,
+                "saved_at": datetime.now().isoformat()
+            }
+
+        # 保存音频文件
+        self.save_to_wav(audio_data, wav_path, metadata)
+
+        metadata_path = None
+        if save_metadata:
+            metadata_path = wav_path.with_suffix('.json')
+
+        return wav_path, metadata_path
+
+    def clear(self) -> None:
+        """清空缓冲区"""
+        with self.lock:
+            self.buffer.fill(0)
+            self.timestamps.fill(0)
+            self.write_index = 0
+            self.total_samples = 0
+            self.is_filled = False
+
+    def get_stats(self) -> dict:
+        """获取缓冲区统计信息"""
+        with self.lock:
+            return {
+                "buffer_size": self.buffer_size,
+                "write_index": self.write_index,
+                "total_samples": self.total_samples,
+                "is_filled": self.is_filled,
+                "fill_percentage": min(100, (self.total_samples / self.buffer_size) * 100)
+            }

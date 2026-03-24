@@ -1,0 +1,15 @@
+[Unit]
+Description=Voice Keyword Detector Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/hard_project
+Environment="PATH=/home/pi/hard_project/voice_detector_env/bin"
+ExecStart=/home/pi/hard_project/voice_detector_env/bin/python main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
