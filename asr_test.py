@@ -165,6 +165,7 @@ def print_result(text, audio_data, sample_rate):
         sample_rate: 采样率
     """
     duration = len(audio_data) / sample_rate
+    std_dev = audio_data.std()
 
     print("\n" + "=" * 60)
     print("识别结果")
@@ -181,10 +182,17 @@ def print_result(text, audio_data, sample_rate):
     else:
         print(f"\n✗ 识别失败")
         print(f"\n可能原因:")
-        print(f"  - 音频中没有语音")
-        print(f"  - 音频质量太差")
-        print(f"  - 语言不匹配（当前: {get_config().asr_language}）")
-        print(f"  - 音频信号太弱（标准差: {audio_data.std():.6f}）")
+
+        # 检查音频信号强度
+        if std_dev < 0.01:
+            print(f"  ⚠️ 音频信号太弱（标准差: {std_dev:.6f}）")
+            print(f"     正常范围应 > 0.01")
+            print(f"     录音脚本应该已警告")
+        else:
+            print(f"  - 音频信号正常（标准差: {std_dev:.6f}）")
+            print(f"  - 音频中没有清晰的语音")
+            print(f"  - 音频质量太差（噪声太大）")
+            print(f"  - 语言不匹配（当前: {get_config().asr_language}）")
 
     print("\n" + "=" * 60)
 

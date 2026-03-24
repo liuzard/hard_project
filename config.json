@@ -18,7 +18,7 @@
   },
   "asr": {
     "model_dir": "./models/02-asr/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
-    "model_file": "model.onnx",
+    "model_file": "model.int8.onnx",
     "tokens_file": "tokens.txt",
     "language": "zh",
     "use_itn": true,
