@@ -112,6 +112,11 @@ class Config:
         return self._config['vad']['num_threads']
 
     @property
+    def vad_window_size(self) -> int:
+        """VAD窗口大小"""
+        return self._config['vad'].get('window_size', 256)
+
+    @property
     def asr_model_dir(self) -> Path:
         """ASR模型目录"""
         return self._config['asr']['model_dir']

@@ -13,7 +13,8 @@
     "min_speech_duration": 0.25,
     "max_speech_duration": 30.0,
     "buffer_size_seconds": 60,
-    "num_threads": 2
+    "num_threads": 2,
+    "window_size": 256
   },
   "asr": {
     "model_dir": "./models/02-asr/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",

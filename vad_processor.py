@@ -27,15 +27,22 @@ class VADProcessor:
         if not self.config.vad_model_path.exists():
             raise FileNotFoundError(f"VAD模型文件不存在: {self.config.vad_model_path}")
 
+        # 创建tenVAD配置（使用ten_vad而不是silero_vad）
+        ten_vad_config = sherpa_onnx.TenVadModelConfig(
+            model=str(self.config.vad_model_path),
+            threshold=self.config.vad_threshold,
+            min_silence_duration=self.config.vad_min_silence_duration,
+            min_speech_duration=self.config.vad_min_speech_duration,
+            max_speech_duration=self.config.vad_max_speech_duration,
+            window_size=self.config.vad_window_size
+        )
+
         # 创建VAD配置
-        vad_config = sherpa_onnx.VadModelConfig()
-        vad_config.silero_vad.model = str(self.config.vad_model_path)
-        vad_config.silero_vad.threshold = self.config.vad_threshold
-        vad_config.silero_vad.min_silence_duration = self.config.vad_min_silence_duration
-        vad_config.silero_vad.min_speech_duration = self.config.vad_min_speech_duration
-        vad_config.silero_vad.max_speech_duration = self.config.vad_max_speech_duration
-        vad_config.sample_rate = self.config.sample_rate
-        vad_config.num_threads = self.config.vad_num_threads
+        vad_config = sherpa_onnx.VadModelConfig(
+            ten_vad=ten_vad_config,
+            sample_rate=self.config.sample_rate,
+            num_threads=self.config.vad_num_threads
+        )
 
         # 创建VAD实例
         self.vad = sherpa_onnx.VoiceActivityDetector(

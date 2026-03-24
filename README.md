@@ -131,14 +131,18 @@ python main.py
 
 ```json
 "vad": {
+  "model_path": "./models/01-vad/ten-vad.onnx",
   "threshold": 0.5,                    // 语音检测阈值（0-1）
   "min_silence_duration": 0.5,         // 最小静音时长（秒）
   "min_speech_duration": 0.25,         // 最小语音时长（秒）
   "max_speech_duration": 30.0,         // 最大语音时长（秒）
   "buffer_size_seconds": 60,           // VAD缓冲区大小（秒）
-  "num_threads": 2                     // 线程数
+  "num_threads": 2,                    // 线程数
+  "window_size": 256                   // tenVAD窗口大小
 }
 ```
+
+**注意**: 本项目使用腾讯 tenVAD 模型，不是 Silero VAD。tenVAD 是专门针对中文等语言的语音活动检测模型。
 
 ### ASR配置
 
@@ -329,7 +333,22 @@ python -c "import pyaudio; p = pyaudio.PyAudio(); [print(f'{i}: {p.get_device_in
 # 在config.json中设置正确的device_index
 ```
 
-### 问题2：sherpa-onnx安装失败
+### 问题2：VAD模型加载失败
+
+**错误信息**: `Unsupported silero vad model`
+
+**原因**: tenVAD 模型格式与 Silero VAD 不同
+
+**解决方案**：
+- 确保使用最新的代码版本（已修复为使用 `TenVadModelConfig`）
+- 检查 `vad_processor.py` 中是否正确使用 `ten_vad` 配置
+- 验证模型文件完整性：
+  ```bash
+  ls -lh models/01-vad/ten-vad.onnx
+  # 应该约为 332KB
+  ```
+
+### 问题3：sherpa-onnx安装失败
 
 **解决方案**：
 ```bash
@@ -345,7 +364,7 @@ make
 pip install install/lib/python3*/site-packages/*.whl
 ```
 
-### 问题3：内存不足
+### 问题4：内存不足
 
 **解决方案**：
 - 减少VAD缓冲区大小：`buffer_size_seconds: 30`
@@ -359,7 +378,7 @@ pip install install/lib/python3*/site-packages/*.whl
   sudo dphys-swapfile swapon
   ```
 
-### 问题4：识别准确率低
+### 问题5：识别准确率低
 
 **解决方案**：
 - 调整VAD阈值：`threshold: 0.6`
@@ -367,7 +386,7 @@ pip install install/lib/python3*/site-packages/*.whl
 - 减少环境噪音
 - 调整采样率和音频格式
 
-### 问题5：程序崩溃或重启
+### 问题6：程序崩溃或重启
 
 **解决方案**：
 - 检查日志：`sudo journalctl -u voice-detector.service -n 50`
