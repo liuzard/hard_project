@@ -26,7 +26,7 @@ try:
     start_time = time.time()
     chunk_count = 0
 
-    while time.time() - start_time < 5:
+    while time.time() - start_time < 60:
         data = recorder.read_chunk()
         if data:
             chunks.append(data)
