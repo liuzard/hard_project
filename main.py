@@ -56,11 +56,14 @@ class VoiceKeywordDetector:
         self.stats = {
             "total_keywords_detected": 0,
             "total_clips_saved": 0,
+            "total_speech_segments": 0,
+            "total_asr_results": 0,
             "start_time": None,
-            "last_detection_time": None
+            "last_detection_time": None,
+            "last_asr_time": None
         }
 
-        # 控制标志
+        # 控制���志
         self.is_running = False
         self._stop_requested = False
         self._in_signal_handler = False
@@ -103,19 +106,28 @@ class VoiceKeywordDetector:
             if speech_segment is None:
                 break
 
+            # 更新语音段统计
+            self.stats["total_speech_segments"] += 1
+
             # 4. ASR处理
             text, duration = self.asr_processor.process_with_duration(
                 speech_segment.samples
             )
 
+            # 打印ASR识别结果（即使为空也打印，显示处理状态）
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.stats["last_asr_time"] = current_time
+
             if text:
-                # 打印识别结果
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                print(f"[{timestamp}] 识别: {text} ({duration:.1f}s)")
+                self.stats["total_asr_results"] += 1
+                print(f"[{timestamp}] 🎤 识别: {text} ({duration:.1f}s)")
+            else:
+                # 显示检测到语音但未能识别
+                print(f"[{timestamp}] 🔊 检测到语音 ({duration:.1f}s) - 无法识别文字")
 
-                # 5. 关键词检测
+            # 5. 关键词检测
+            if text:
                 matched_keyword = self.keyword_detector.detect(text)
-
                 if matched_keyword:
                     self._handle_keyword_detection(matched_keyword, current_time)
 
@@ -176,8 +188,10 @@ class VoiceKeywordDetector:
             self.stats["start_time"] = time.time()
 
             print("\n[INFO] 系统运行中...")
-            print("[INFO] 开始监听关键词:", ", ".join(self.keyword_detector.get_keywords()))
+            print("[INFO] 监听关键词:", ", ".join(self.keyword_detector.get_keywords()))
+            print("[INFO] 实时显示ASR识别结果...")
             print("[INFO] 按 Ctrl+C 停止\n")
+            print("-" * 60)
 
             # 主循环
             while self.is_running and not self._stop_requested:
@@ -221,12 +235,18 @@ class VoiceKeywordDetector:
             print("运行统计")
             print("=" * 60)
             print(f"运行时长: {runtime:.1f} 秒 ({runtime/60:.1f} 分钟)")
-            print(f"关键词检测次数: {self.stats['total_keywords_detected']}")
-            print(f"保存音频片段数: {self.stats['total_clips_saved']}")
+            print(f"语音段检测: {self.stats['total_speech_segments']} 次")
+            print(f"ASR识别成功: {self.stats['total_asr_results']} 次")
+            print(f"关键词检测: {self.stats['total_keywords_detected']} 次")
+            print(f"保存音频片段: {self.stats['total_clips_saved']} 个")
+
+            if self.stats["total_speech_segments"] > 0:
+                asr_rate = (self.stats['total_asr_results'] / self.stats['total_speech_segments']) * 100
+                print(f"识别成功率: {asr_rate:.1f}%")
 
             if self.stats["total_keywords_detected"] > 0:
                 rate = self.stats["total_keywords_detected"] / (runtime / 60)
-                print(f"平均检测率: {rate:.2f} 次/分钟")
+                print(f"关键词检测率: {rate:.2f} 次/分钟")
 
         if not self._in_signal_handler:
             print("\n[INFO] 系统已停止")
