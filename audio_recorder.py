@@ -53,7 +53,7 @@ class AudioRecorder:
         if self.pyaudio is None:
             self.pyaudio = pyaudio.PyAudio()
 
-        print("[INFO] 正在查找USB麦克风设备...")
+        print("[INFO] 正在查找录音设备...")
 
         for i in range(self.pyaudio.get_device_count()):
             info = self.pyaudio.get_device_info_by_index(i)
@@ -66,7 +66,17 @@ class AudioRecorder:
                 print(f"       - 输入通道: {info['maxInputChannels']}")
                 return i
 
-        print("[WARN] 未自动找到USB设备")
+            # 检查是否是 hw:2 设备（树莓派常见情况）
+            if info["maxInputChannels"] > 0:
+                # 尝试从设备名中识别卡号
+                if "hw:2" in device_name.lower() or "card 2" in device_name.lower():
+                    print(f"[INFO] 找到 hw:2 设备: {device_name} (index={i})")
+                    print(f"       - 采样率: {info['defaultSampleRate']:.0f} Hz")
+                    print(f"       - 输入通道: {info['maxInputChannels']}")
+                    return i
+
+        print("[WARN] 未自动找到USB或hw:2设备")
+        print("[INFO] 运行 'python find_audio_device.py' 查看所有可用设备")
         return None
 
     def get_device_index(self) -> int:

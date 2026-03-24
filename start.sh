@@ -43,6 +43,14 @@ echo "创建输出目录..."
 mkdir -p detected_clips
 echo "✓ 输出目录已创建: ./detected_clips"
 
+# 检查音频设备（可选）
+echo ""
+echo "检查音频设备..."
+if command -v arecord &> /dev/null; then
+    echo "检测到 arecord，可以测试录音设备"
+    echo "运行以下命令测试: arecord -D plughw:2,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav"
+fi
+
 # 启动程序
 echo ""
 echo "=================================================="

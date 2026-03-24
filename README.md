@@ -226,12 +226,31 @@ arecord -f cd -D hw:1,0 | aplay -f cd
 ```
 
 #### 配置音频设备（可选）
-如果需要指定特定设备，修改 `config.json`：
+
+**方法1：自动检测**
+保持 `config.json` 中的 `"device_index": null`，程序会自动检测 USB 或 hw:2 设备。
+
+**方法2：手动指定**
+如果自动检测失败，先查找设备：
+```bash
+# 列出 ALSA 设备
+arecord -l
+
+# 使用 Python 脚本查找 PyAudio 设备索引
+python3 find_audio_device.py
+
+# 或运行设备配置脚本
+bash setup_device.sh
+```
+
+然后修改 `config.json`：
 ```json
 "audio": {
-  "device_index": 1  // 改为你的设备索引
+  "device_index": 2  // 使用 hw:2 对应的 PyAudio 索引
 }
 ```
+
+**注意**: ALSA 的 `plughw:2,0` 中的 `2` 是卡号，PyAudio 的设备索引可能不同，请运行 `find_audio_device.py` 确认。
 
 ### 6. 运行程序
 
@@ -325,13 +344,39 @@ sudo journalctl -u voice-detector.service -f
 
 ### 问题1：找不到USB麦克风
 
-**解决方案**：
-```bash
-# 列出所有音频设备
-python -c "import pyaudio; p = pyaudio.PyAudio(); [print(f'{i}: {p.get_device_info_by_index(i)[\"name\"]}') for i in range(p.get_device_count())]"
+**症状**: 程序无法打开音频流，提示 "Invalid input device index"
 
-# 在config.json中设置正确的device_index
-```
+**解决方案**：
+
+1. **使用 arecord 测试 ALSA 设备**:
+   ```bash
+   # 列出 ALSA 设备
+   arecord -l
+
+   # 测试你的设备 (例�� plughw:2,0)
+   arecord -D plughw:2,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav
+   ```
+
+2. **查找 PyAudio 设备索引**:
+   ```bash
+   python3 find_audio_device.py
+   ```
+
+3. **更新 config.json**:
+   ```json
+   "audio": {
+     "device_index": 2,  // 使用 find_audio_device.py 找到的索引
+     ...
+   }
+   ```
+
+4. **或者使用自动检测**:
+   ```json
+   "audio": {
+     "device_index": null,  // 让程序自动检测 USB 或 hw:2 设备
+     ...
+   }
+   ```
 
 ### 问题2：VAD模型加载失败
 
