@@ -5,24 +5,17 @@
 """
 
 import pyaudio
-import signal
 import sys
-from typing import Optional, Callable
+from typing import Optional
 from config import get_config
 
 
 class AudioRecorder:
     """音频录制器"""
 
-    def __init__(self, on_audio_callback: Callable[[bytes], None]):
-        """
-        初始化音频录制器
-
-        Args:
-            on_audio_callback: 音频数据回调函数，接收原始PCM数据
-        """
+    def __init__(self):
+        """初始化音频录制器"""
         self.config = get_config()
-        self.on_audio_callback = on_audio_callback
 
         # PyAudio实例
         self.pyaudio = None
@@ -30,20 +23,12 @@ class AudioRecorder:
 
         # 控制标志
         self.is_running = False
+        self._stop_requested = False
 
         # 设备索引
         self.device_index = None
 
-        # 设置信号处理器
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-
-    def _signal_handler(self, sig, frame):
-        """信号处理器：优雅退出"""
-        print(f"\n[INFO] 收到停止信号 (signal {sig})，正在停止录音...")
-        self.stop()
-
-    def find_usb_device(self) -> int:
+    def find_usb_device(self) -> Optional[int]:
         """
         自动查找USB录音设备
 
@@ -59,7 +44,7 @@ class AudioRecorder:
             info = self.pyaudio.get_device_info_by_index(i)
             device_name = info.get("name", "")
 
-            # 检查是否是USB设备且有输入通道
+            # 检查是否是USB设备且��输入通道
             if "USB" in device_name and info["maxInputChannels"] > 0:
                 print(f"[INFO] 找到USB录音设备: {device_name} (index={i})")
                 print(f"       - 采样率: {info['defaultSampleRate']:.0f} Hz")
@@ -76,15 +61,15 @@ class AudioRecorder:
                     return i
 
         print("[WARN] 未自动找到USB或hw:2设备")
-        print("[INFO] 运行 'python find_audio_device.py' 查看所有可用设备")
+        print("[INFO] 运行 'python3 find_audio_device.py' 查看所有可用设备")
         return None
 
-    def get_device_index(self) -> int:
+    def get_device_index(self) -> Optional[int]:
         """
         获取录音设备索引
 
         Returns:
-            设备索引
+            设备索引，None表示使用默认设备
         """
         # 优先使用配置文件中的设备索引
         if self.config.audio_device_index is not None:
@@ -92,12 +77,6 @@ class AudioRecorder:
 
         # 尝试自动查找USB设备
         device_idx = self.find_usb_device()
-
-        if device_idx is None:
-            # 使用默认设备
-            print("[INFO] 使用系统默认录音设备")
-            device_idx = None  # None表示使用默认设备
-
         return device_idx
 
     def start(self):
@@ -123,18 +102,19 @@ class AudioRecorder:
         print(f"       - 每次读取: {self.config.chunk_size} 帧")
 
         try:
-            # 打开音频流
+            # 打开音频流（不使用回调，使用阻塞式读取）
             self.stream = self.pyaudio.open(
                 format=pyaudio.paInt16,  # 16-bit PCM
                 channels=self.config.channels,
                 rate=self.config.sample_rate,
                 input=True,
                 input_device_index=self.device_index,
-                frames_per_buffer=self.config.chunk_size,
-                stream_callback=self._audio_callback
+                frames_per_buffer=self.config.chunk_size
             )
 
             self.is_running = True
+            self._stop_requested = False
+
             print("[INFO] 音频录制已启动")
             print("[INFO] 按 Ctrl+C 停止录音\n")
 
@@ -143,41 +123,29 @@ class AudioRecorder:
             self.cleanup()
             raise
 
-    def _audio_callback(self, in_data, frame_count, time_info, status):
-        """
-        PyAudio流回调函数
-
-        Args:
-            in_data: 输入音频数据
-            frame_count: 帧数
-            time_info: 时间信息
-            status: 状态
-
-        Returns:
-            (None, pyaudio.paContinue)
-        """
-        if status:
-            print(f"[WARN] 音频流状态: {status}")
-
-        # 调用用户提供的回调函数
-        if self.on_audio_callback:
-            self.on_audio_callback(in_data)
-
-        return (None, pyaudio.paContinue)
-
     def read_chunk(self) -> Optional[bytes]:
         """
         阻塞式读取一个音频块
 
         Returns:
-            音频数据（bytes），如果出错则返回None
+            音频数据（bytes），如果停止或出错则返回None
         """
-        if not self.is_running or self.stream is None:
+        if not self.is_running or self._stop_requested:
+            return None
+
+        if self.stream is None:
             return None
 
         try:
             data = self.stream.read(self.config.chunk_size, exception_on_overflow=False)
             return data
+        except OSError as e:
+            # 流已关闭，正常退出
+            if e.errno == -9988:  # Stream closed
+                return None
+            # 其他错误
+            print(f"[ERROR] 读取音频数据异常: {e}")
+            return None
         except Exception as e:
             print(f"[ERROR] 读取音频数据异常: {e}")
             return None
@@ -188,6 +156,7 @@ class AudioRecorder:
             return
 
         print("[INFO] 正在停止音频录制...")
+        self._stop_requested = True
         self.is_running = False
 
         if self.stream:
@@ -195,7 +164,9 @@ class AudioRecorder:
                 self.stream.stop_stream()
                 self.stream.close()
             except Exception as e:
-                print(f"[WARN] 关闭音频流时出错: {e}")
+                # 忽略关闭时的错误
+                pass
+            self.stream = None
 
         self.cleanup()
 
@@ -203,6 +174,7 @@ class AudioRecorder:
         """清理资源"""
         if self.stream:
             try:
+                self.stream.stop_stream()
                 self.stream.close()
             except:
                 pass
@@ -212,10 +184,11 @@ class AudioRecorder:
             try:
                 self.pyaudio.terminate()
             except Exception as e:
-                print(f"[WARN] 终止PyAudio时出错: {e}")
+                pass
             self.pyaudio = None
 
-        print("[INFO] 音频录制已停止")
+        self.is_running = False
+        self._stop_requested = True
 
     def list_devices(self):
         """列出所有可用的音频设备"""
@@ -237,6 +210,10 @@ class AudioRecorder:
             print(f"       {input_str}, {output_str}, 采样率: {sample_rate:.0f} Hz")
 
         print("=====================\n")
+
+    def __del__(self):
+        """析构函数，确保资源释放"""
+        self.cleanup()
 
 
 def pcm_int16_to_float32(data: bytes) -> 'np.ndarray':

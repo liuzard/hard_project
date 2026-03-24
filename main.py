@@ -62,15 +62,23 @@ class VoiceKeywordDetector:
 
         # 控制标志
         self.is_running = False
+        self._stop_requested = False
+        self._in_signal_handler = False
 
         # 设置信号处理器
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
     def _signal_handler(self, sig, frame):
-        """信号处理器"""
+        """信号��理器"""
+        # 防止递归调用
+        if self._in_signal_handler:
+            return
+
+        self._in_signal_handler = True
         print(f"\n[INFO] 收到停止信号 (signal {sig})")
-        self.stop()
+        self._stop_requested = True
+        self.is_running = False
 
     def process_audio_chunk(self, raw_data: bytes):
         """
@@ -172,12 +180,13 @@ class VoiceKeywordDetector:
             print("[INFO] 按 Ctrl+C 停止\n")
 
             # 主循环
-            while self.is_running:
+            while self.is_running and not self._stop_requested:
                 # 读取音频块
                 raw_data = recorder.read_chunk()
 
                 if raw_data is None:
-                    continue
+                    # 录音器已停止
+                    break
 
                 # 处理音频
                 self.process_audio_chunk(raw_data)
@@ -185,9 +194,10 @@ class VoiceKeywordDetector:
         except KeyboardInterrupt:
             print("\n[INFO] 收到键盘中断信号")
         except Exception as e:
-            print(f"\n[ERROR] 系统运行异常: {e}")
-            import traceback
-            traceback.print_exc()
+            if not self._in_signal_handler:
+                print(f"\n[ERROR] 系统运行异常: {e}")
+                import traceback
+                traceback.print_exc()
         finally:
             self.stop()
             recorder.stop()
@@ -197,11 +207,15 @@ class VoiceKeywordDetector:
         if not self.is_running:
             return
 
-        print("\n[INFO] 正在停止系统...")
-        self.is_running = False
+        # 防止在信号处理器中打印
+        if not self._in_signal_handler:
+            print("\n[INFO] 正在停止系统...")
 
-        # 打印统计信息
-        if self.stats["start_time"]:
+        self.is_running = False
+        self._stop_requested = True
+
+        # 只在非信号处理中打印统计信息
+        if not self._in_signal_handler and self.stats["start_time"]:
             runtime = time.time() - self.stats["start_time"]
             print(f"\n" + "=" * 60)
             print("运行统计")
@@ -214,7 +228,8 @@ class VoiceKeywordDetector:
                 rate = self.stats["total_keywords_detected"] / (runtime / 60)
                 print(f"平均检测率: {rate:.2f} 次/分钟")
 
-        print("\n[INFO] 系统已停止")
+        if not self._in_signal_handler:
+            print("\n[INFO] 系统已停止")
 
 
 def main():
