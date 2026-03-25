@@ -7,7 +7,7 @@
 import pyaudio
 import sys
 from typing import Optional
-from config import get_config
+from .config import get_config
 
 
 class AudioRecorder:

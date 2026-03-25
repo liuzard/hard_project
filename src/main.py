@@ -11,12 +11,12 @@ from datetime import datetime
 
 import numpy as np
 
-from config import get_config
-from audio_recorder import AudioRecorder, pcm_int16_to_float32
-from audio_buffer import AudioBuffer
-from vad_processor import VADProcessor
-from asr_processor import ASRProcessor
-from keyword_detector import KeywordDetector
+from .config import get_config
+from .audio_recorder import AudioRecorder, pcm_int16_to_float32
+from .audio_buffer import AudioBuffer
+from .vad_processor import VADProcessor
+from .asr_processor import ASRProcessor
+from .keyword_detector import KeywordDetector
 
 
 class VoiceKeywordDetector:

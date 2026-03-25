@@ -9,6 +9,9 @@ import time
 import numpy as np
 from pathlib import Path
 
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 print("=" * 60)
 print("模块测试脚本")
 print("=" * 60)
@@ -16,8 +19,8 @@ print("=" * 60)
 # 测试1: 配置模块
 print("\n[测试 1/6] 测试配置模块...")
 try:
-    from config import get_config, Config
-    config = Config("config.json")
+    from src.config import get_config, Config
+    config = Config(str(Path(__file__).parent.parent / "config.json"))
     print("✓ 配置模块正常")
     print(f"  - 采样率: {config.sample_rate}")
     print(f"  - 关键词: {config.keywords}")
@@ -28,7 +31,7 @@ except Exception as e:
 # 测试2: 音频缓冲区
 print("\n[测试 2/6] 测试音频缓冲区...")
 try:
-    from audio_buffer import AudioBuffer
+    from src.audio_buffer import AudioBuffer
 
     # 创建缓冲区
     buffer = AudioBuffer(sample_rate=16000, duration=10)
@@ -50,7 +53,7 @@ except Exception as e:
 # 测试3: VAD模块
 print("\n[测试 3/6] 测试VAD模块...")
 try:
-    from vad_processor import VADProcessor
+    from src.vad_processor import VADProcessor
 
     # 跳过VAD测试如果模型文件不存在（开发环境）
     if not config.vad_model_path.exists():
@@ -67,7 +70,7 @@ except Exception as e:
 # 测试4: ASR模块
 print("\n[测试 4/6] 测试ASR模块...")
 try:
-    from asr_processor import ASRProcessor
+    from src.asr_processor import ASRProcessor
 
     # 跳过ASR测试如果模型文件不存在（开发环境）
     if not config.asr_model_path.exists():
@@ -84,7 +87,7 @@ except Exception as e:
 # 测试5: 关键词检测模块
 print("\n[测试 5/6] 测试关键词检测模块...")
 try:
-    from keyword_detector import KeywordDetector
+    from src.keyword_detector import KeywordDetector
 
     detector = KeywordDetector()
     print("✓ 关键词检测模块正常")
@@ -114,7 +117,7 @@ except Exception as e:
 # 测试6: 音频录制模块
 print("\n[测试 6/6] 测试音频录制模块...")
 try:
-    from audio_recorder import AudioRecorder, pcm_int16_to_float32
+    from src.audio_recorder import AudioRecorder, pcm_int16_to_float32
 
     # 测试PCM转换
     import struct
@@ -139,6 +142,4 @@ print("测试完成")
 print("=" * 60)
 
 print("\n如需运行完整系统，请执行:")
-print("  python main.py")
-print("\n或使用快速启动脚本:")
-print("  bash start.sh")
+print("  python -m src.main")

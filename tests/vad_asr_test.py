@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ASR测试脚本 (VAD 增强版)
-读取WAV文件 -> VAD自动切音断句 -> SenseVoice-Small逐句识别 -> 拼接结果
+读取WAV文件 -> VAD自动切音断句 -> Paraformer-zh逐句识别 -> 拼接结果
 """
 
 import sys
@@ -9,6 +9,9 @@ import argparse
 from pathlib import Path
 import wave
 import numpy as np
+
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
     import sherpa_onnx
@@ -232,7 +235,9 @@ class Config:
 def main():
     parser = argparse.ArgumentParser(description='ASR测试脚本 (含 VAD 自动断句)')
     parser.add_argument('files', nargs='+', help='WAV文件路径')
-    parser.add_argument('-c', '--config', type=str, default='config.json', help='配置文件路径')
+    parser.add_argument('-c', '--config', type=str,
+                        default=str(Path(__file__).parent.parent / 'config.json'),
+                        help='配置文件路径')
     args = parser.parse_args()
 
     try:

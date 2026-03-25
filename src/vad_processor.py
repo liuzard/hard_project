@@ -7,7 +7,7 @@ import sherpa_onnx
 import numpy as np
 from pathlib import Path
 from typing import Optional
-from config import get_config
+from .config import get_config
 
 
 class VADProcessor:
