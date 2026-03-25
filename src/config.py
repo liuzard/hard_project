@@ -127,16 +127,6 @@ class Config:
         return self._config['asr']['tokens_file']
 
     @property
-    def asr_language(self) -> str:
-        """ASR语言设置"""
-        return self._config['asr']['language']
-
-    @property
-    def asr_use_itn(self) -> bool:
-        """是否使用ITN（逆文本标准化）"""
-        return self._config['asr']['use_itn']
-
-    @property
     def asr_num_threads(self) -> int:
         """ASR线程数"""
         return self._config['asr']['num_threads']

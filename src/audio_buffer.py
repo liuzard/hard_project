@@ -50,7 +50,7 @@ class AudioBuffer:
 
         Args:
             samples: 音频数据（float32 numpy数组）
-            timestamp: 当前时间戳（time.time()）
+            timestamp: 这批音频最后一个样本对应的时间戳（time.time()）
 
         Returns:
             实际写入的样本数
@@ -63,13 +63,18 @@ class AudioBuffer:
                 samples = samples[-self.buffer_size:]
                 num_samples = self.buffer_size
 
+            # 为每个样本计算时间戳：末尾timestamp向前推算
+            # t[i] = timestamp - (num_samples - 1 - i) / sample_rate
+            offsets = np.arange(num_samples, dtype=np.float64)
+            sample_timestamps = timestamp - (num_samples - 1 - offsets) / self.sample_rate
+
             # 计算写入位置
             end_index = self.write_index + num_samples
 
             if end_index <= self.buffer_size:
                 # 不需要回绕
                 self.buffer[self.write_index:end_index] = samples
-                self.timestamps[self.write_index:end_index] = timestamp
+                self.timestamps[self.write_index:end_index] = sample_timestamps
             else:
                 # 需要回绕
                 first_part = self.buffer_size - self.write_index
@@ -77,10 +82,8 @@ class AudioBuffer:
 
                 self.buffer[self.write_index:] = samples[:first_part]
                 self.buffer[:second_part] = samples[first_part:]
-
-                # 时间���也分段写入
-                self.timestamps[self.write_index:] = timestamp
-                self.timestamps[:second_part] = timestamp
+                self.timestamps[self.write_index:] = sample_timestamps[:first_part]
+                self.timestamps[:second_part] = sample_timestamps[first_part:]
 
             # 更新写入索引
             self.write_index = (self.write_index + num_samples) % self.buffer_size

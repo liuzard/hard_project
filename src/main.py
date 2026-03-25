@@ -63,10 +63,13 @@ class VoiceKeywordDetector:
             "last_asr_time": None
         }
 
-        # 控制���志
+        # 控制标志
         self.is_running = False
         self._stop_requested = False
         self._in_signal_handler = False
+
+        # 上一个音频块的时间戳（用于检测录音流中断）
+        self._last_chunk_time: float = None
 
         # 设置信号处理器
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -116,7 +119,8 @@ class VoiceKeywordDetector:
 
             # 打印ASR识别结果（即使为空也打印，显示处理状态）
             timestamp = datetime.now().strftime("%H:%M:%S")
-            self.stats["last_asr_time"] = current_time
+            # 用语音段起始时间作为参考时间，保持一致性
+            self.stats["last_asr_time"] = speech_segment.start
 
             if text:
                 self.stats["total_asr_results"] += 1
@@ -126,10 +130,21 @@ class VoiceKeywordDetector:
                 print(f"[{timestamp}] 🔊 检测到语音 ({duration:.1f}s) - 无法识别文字")
 
             # 5. 关键词检测
+            # 注意：使用语音段自身的起始时间戳（speech_segment.start）而非 current_time，
+            # 确保保存的音频窗口与语音段真实时间对齐。
             if text:
                 matched_keyword = self.keyword_detector.detect(text)
                 if matched_keyword:
-                    self._handle_keyword_detection(matched_keyword, current_time)
+                    self._handle_keyword_detection(matched_keyword, speech_segment.start)
+
+        # 6. 重置VAD状态（仅在音频流出现明显中断时）
+        # 若两个音频块之间的时间间隔超过 VAD 最小静音时长的 3 倍，
+        # 说明录音可能出现过中断，此时 reset() 清理残留状态，避免误检。
+        if self._last_chunk_time is not None:
+            gap = current_time - self._last_chunk_time
+            if gap > self.config.vad_min_silence_duration * 3:
+                self.vad_processor.reset()
+        self._last_chunk_time = current_time
 
     def _handle_keyword_detection(self, keyword: str, detection_time: float):
         """
