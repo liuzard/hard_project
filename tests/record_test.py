@@ -18,7 +18,7 @@ except ImportError:
     sys.exit(1)
 
 # 固定参数
-DURATION = 60  # 固定60秒
+DURATION = 600  # 固定60秒
 SAMPLE_RATE = 16000  # 采样率 16kHz
 CHANNELS = 1  # 单声道
 FORMAT = pyaudio.paInt16  # 16-bit PCM
