@@ -9,9 +9,9 @@
   "vad": {
     "model_path": "./models/01-vad/ten-vad.onnx",
     "threshold": 0.5,
-    "min_silence_duration": 0.5,
+    "min_silence_duration": 0.2,
     "min_speech_duration": 0.25,
-    "max_speech_duration": 30.0,
+    "max_speech_duration": 12.0,
     "buffer_size_seconds": 60,
     "num_threads": 2,
     "window_size": 256

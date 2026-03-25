@@ -111,22 +111,19 @@ def recognize_audio_with_vad(vad, recognizer, audio_data, sample_rate, window_si
     """使用 VAD 切片并进行分段识别"""
     print(f"\n开始流水线识别 (VAD切片 -> ASR识别)...")
 
-    # 1. 将音频按 window_size 喂给 VAD
+    # 优化喂数据逻辑：每次送入 0.1秒 (1600个采样点) 的数据，减少 Python 循环开销
+    chunk_size = int(sample_rate * 0.1)
     segments = []
-    for i in range(0, len(audio_data), window_size):
-        chunk = audio_data[i: i + window_size]
-        # 如果最后一块不足 window_size，用 0 补齐 (VAD对形状有严格要求)
-        if len(chunk) < window_size:
-            chunk = np.pad(chunk, (0, window_size - len(chunk)), 'constant')
 
+    for i in range(0, len(audio_data), chunk_size):
+        chunk = audio_data[i: i + chunk_size]
         vad.accept_waveform(chunk)
 
-        # 一旦 VAD 判定某一段语音结束，就会吐出一个 segment
         while not vad.empty():
             segments.append(vad.front.samples)
             vad.pop()
 
-    # 冲刷 VAD 缓存，把最后还没结束的尾音吐出来
+    # 冲刷 VAD 缓存
     vad.flush()
     while not vad.empty():
         segments.append(vad.front.samples)
@@ -142,13 +139,20 @@ def recognize_audio_with_vad(vad, recognizer, audio_data, sample_rate, window_si
     # 2. 逐个片段送入 SenseVoice 识别
     full_text = []
     for i, segment_samples in enumerate(segments):
+        duration = len(segment_samples) / sample_rate
+
+        # 跳过极短的无效噪音片段
+        if duration < 0.2:
+            continue
+
         stream = recognizer.create_stream()
         stream.accept_waveform(sample_rate, segment_samples)
         recognizer.decode_stream(stream)
 
         text = stream.result.text.strip()
         if text:
-            print(f"    ▶ 片段 {i + 1}/{total_segments}: {text}")
+            # 打印片段的准确时长，方便排查截断问题
+            print(f"    ▶ 片段 {i + 1}/{total_segments} ({duration:.2f}s): {text}")
             full_text.append(text)
 
     # 将所有片段拼接成完整段落
