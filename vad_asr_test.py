@@ -89,20 +89,19 @@ def create_vad_detector(config):
 
 
 def create_asr_recognizer(config):
-    """创建 ASR 识别器"""
-    print("\n[3/3] 正在加载 ASR 模型...")
+    """创建 ASR 识别器 (Paraformer-zh)"""
+    print("\n[3/3] 正在加载 ASR 模型 (Paraformer-zh)...")
     if not config.asr_model_path.exists():
         raise FileNotFoundError(f"ASR模型文件不存在: {config.asr_model_path}")
 
-    recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+    recognizer = sherpa_onnx.OfflineRecognizer.from_paraformer(
         model=str(config.asr_model_path),
         tokens=str(config.asr_tokens_path),
         num_threads=config.asr_num_threads,
-        use_itn=config.asr_use_itn,
-        language=config.asr_language,
+        decoding_method="greedy_search",
         debug=False,
     )
-    print("  ✓ ASR 模型加载完成")
+    print("  ✓ ASR 模型加载完成 (Paraformer-zh)")
     return recognizer
 
 
@@ -226,12 +225,6 @@ class Config:
 
     @property
     def asr_num_threads(self): return self._config['asr']['num_threads']
-
-    @property
-    def asr_language(self): return self._config['asr']['language']
-
-    @property
-    def asr_use_itn(self): return self._config['asr']['use_itn']
 
 
 def main():
