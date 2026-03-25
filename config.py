@@ -97,11 +97,6 @@ class Config:
         return self._config['vad']['min_speech_duration']
 
     @property
-    def vad_max_speech_duration(self) -> float:
-        """VAD最大语音时长"""
-        return self._config['vad']['max_speech_duration']
-
-    @property
     def vad_buffer_size_seconds(self) -> float:
         """VAD缓冲区大小（秒）"""
         return self._config['vad']['buffer_size_seconds']
@@ -114,7 +109,7 @@ class Config:
     @property
     def vad_window_size(self) -> int:
         """VAD窗口大小"""
-        return self._config['vad'].get('window_size', 256)
+        return self._config['vad'].get('window_size', 512)
 
     @property
     def asr_model_dir(self) -> Path:

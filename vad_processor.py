@@ -1,6 +1,6 @@
 """
 VAD（语音活动检测）处理模块
-使用tenVAD模型进行语音活动检测
+使用 Silero VAD v6 模型进行语音活动检测
 """
 
 import sherpa_onnx
@@ -27,19 +27,18 @@ class VADProcessor:
         if not self.config.vad_model_path.exists():
             raise FileNotFoundError(f"VAD模型文件不存在: {self.config.vad_model_path}")
 
-        # 创建tenVAD配置（使用ten_vad而不是silero_vad）
-        ten_vad_config = sherpa_onnx.TenVadModelConfig(
+        # 创建 Silero VAD v6 配置
+        silero_vad_config = sherpa_onnx.SileroVadModelConfig(
             model=str(self.config.vad_model_path),
             threshold=self.config.vad_threshold,
             min_silence_duration=self.config.vad_min_silence_duration,
             min_speech_duration=self.config.vad_min_speech_duration,
-            max_speech_duration=self.config.vad_max_speech_duration,
             window_size=self.config.vad_window_size
         )
 
         # 创建VAD配置
         vad_config = sherpa_onnx.VadModelConfig(
-            ten_vad=ten_vad_config,
+            silero_vad=silero_vad_config,
             sample_rate=self.config.sample_rate,
             num_threads=self.config.vad_num_threads
         )
@@ -50,11 +49,10 @@ class VADProcessor:
             buffer_size_in_seconds=self.config.vad_buffer_size_seconds
         )
 
-        print("[INFO] VAD模型加载完成")
+        print("[INFO] VAD模型加载完成 (Silero VAD v6)")
         print(f"       - 阈值: {self.config.vad_threshold}")
         print(f"       - 最小静音时长: {self.config.vad_min_silence_duration}s")
         print(f"       - 最小语音时长: {self.config.vad_min_speech_duration}s")
-        print(f"       - 最大语音时长: {self.config.vad_max_speech_duration}s")
         print(f"       - 缓冲区大小: {self.config.vad_buffer_size_seconds}s")
 
     def process(self, samples: np.ndarray) -> bool:

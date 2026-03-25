@@ -126,7 +126,7 @@ try:
 
     # 列出设备
     print("\n  可用音频设备:")
-    recorder = AudioRecorder(lambda x: None)
+    recorder = AudioRecorder()
     recorder.list_devices()
 except Exception as e:
     print(f"✗ 音频录制模块失败: {e}")

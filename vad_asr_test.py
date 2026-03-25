@@ -64,18 +64,17 @@ def create_vad_detector(config):
     if not config.vad_model_path.exists():
         raise FileNotFoundError(f"VAD模型文件不存在: {config.vad_model_path}")
 
-    # tenVAD 使用 TenVadModelConfig（不是 SileroVadModelConfig）
-    ten_vad_config = sherpa_onnx.TenVadModelConfig(
+    # Silero VAD v6 使用 SileroVadModelConfig
+    silero_vad_config = sherpa_onnx.SileroVadModelConfig(
         model=str(config.vad_model_path),
         threshold=config.vad_threshold,
         min_silence_duration=config.vad_min_silence_duration,
         min_speech_duration=config.vad_min_speech_duration,
-        max_speech_duration=config.vad_max_speech_duration,
         window_size=config.vad_window_size
     )
 
     vad_config = sherpa_onnx.VadModelConfig(
-        ten_vad=ten_vad_config,
+        silero_vad=silero_vad_config,
         sample_rate=config.sample_rate,
         num_threads=config.vad_num_threads
     )
@@ -85,7 +84,7 @@ def create_vad_detector(config):
         buffer_size_in_seconds=config.vad_buffer_size_seconds
     )
 
-    print("  ✓ VAD 模型加载完成")
+    print("  ✓ VAD 模型加载完成 (Silero VAD v6)")
     return vad
 
 
@@ -208,9 +207,6 @@ class Config:
 
     @property
     def vad_min_speech_duration(self): return self._config['vad']['min_speech_duration']
-
-    @property
-    def vad_max_speech_duration(self): return self._config['vad']['max_speech_duration']
 
     @property
     def vad_buffer_size_seconds(self): return self._config['vad']['buffer_size_seconds']
