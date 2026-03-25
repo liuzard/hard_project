@@ -5,7 +5,7 @@
 """
 
 from typing import List, Optional, Tuple
-from config import get_config
+from .config import get_config
 
 
 class KeywordDetector:
