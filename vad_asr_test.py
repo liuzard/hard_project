@@ -95,9 +95,11 @@ def create_asr_recognizer(config):
         raise FileNotFoundError(f"ASR模型文件不存在: {config.asr_model_path}")
 
     recognizer = sherpa_onnx.OfflineRecognizer.from_paraformer(
-        model=str(config.asr_model_path),
+        paraformer=str(config.asr_model_path),
         tokens=str(config.asr_tokens_path),
         num_threads=config.asr_num_threads,
+        sample_rate=16000,
+        feature_dim=80,
         decoding_method="greedy_search",
         debug=False,
     )
