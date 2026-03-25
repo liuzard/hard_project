@@ -123,13 +123,13 @@ def recognize_audio_with_vad(vad, recognizer, audio_data, sample_rate, window_si
 
         # 一旦 VAD 判定某一段语音结束，就会吐出一个 segment
         while not vad.empty():
-            segments.append(vad.front().samples)
+            segments.append(vad.front.samples)
             vad.pop()
 
     # 冲刷 VAD 缓存，把最后还没结束的尾音吐出来
     vad.flush()
     while not vad.empty():
-        segments.append(vad.front().samples)
+        segments.append(vad.front.samples)
         vad.pop()
 
     total_segments = len(segments)
