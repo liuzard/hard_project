@@ -71,6 +71,10 @@ class VoiceKeywordDetector:
         # 上一个音频块的时间戳（用于检测录音流中断）
         self._last_chunk_time: float = None
 
+        # 状态心跳相关
+        self._last_activity_time: float = None       # 上次有声活动的时间（用于心跳计时）
+        self._heartbeat_interval: float = 10.0      # 心跳间隔（秒）
+
         # 设置信号处理器
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -112,6 +116,9 @@ class VoiceKeywordDetector:
             # 更新语音段统计
             self.stats["total_speech_segments"] += 1
 
+            # 有声活动，重置空闲计时器（防止心跳误触发）
+            self._last_activity_time = current_time
+
             # 4. ASR处理
             text, duration = self.asr_processor.process_with_duration(
                 speech_segment.samples
@@ -145,6 +152,23 @@ class VoiceKeywordDetector:
             if gap > self.config.vad_min_silence_duration * 3:
                 self.vad_processor.reset()
         self._last_chunk_time = current_time
+
+        # 7. 状态心跳：每 _heartbeat_interval 秒无活动时打印一行，保持终端可见进度
+        #    有活动时（self._last_activity_time 会更新）不额外打印，避免干扰正常输出
+        if self._last_activity_time is None:
+            self._last_activity_time = current_time
+
+        idle = current_time - self._last_activity_time
+        if idle >= self._heartbeat_interval:
+            elapsed = current_time - self.stats["start_time"]
+            buf_stats = self.audio_buffer.get_stats()
+            status = "● 录音正常" if buf_stats["is_filled"] else "○ 等待缓冲区填满"
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] "
+                  f"[{elapsed:.0f}s] {status} | "
+                  f"已检测 {self.stats['total_speech_segments']} 个语音段  "
+                  f"{self.stats['total_asr_results']} 次识别  "
+                  f"{self.stats['total_keywords_detected']} 个关键词")
+            self._last_activity_time = current_time
 
     def _handle_keyword_detection(self, keyword: str, detection_time: float):
         """
