@@ -154,8 +154,8 @@ def recognize_audio_with_vad(vad, recognizer, audio_data, sample_rate, window_si
             print(f"    ▶ 片段 {i + 1}/{total_segments} ({duration:.2f}s): {text}")
             full_text.append(text)
 
-    # 将所有片段拼接成完整段落
-    final_result = "，".join(full_text) + "。" if full_text else ""
+    # SenseVoice 已自带标点，直接拼接即可（为防粘连可加个空格）
+    final_result = " ".join(full_text) if full_text else ""
     return final_result
 
 

@@ -8,8 +8,8 @@
   },
   "vad": {
     "model_path": "./models/01-vad/silero_vad.onnx",
-    "threshold": 0.5,
-    "min_silence_duration": 0.2,
+    "threshold": 0.55,
+    "min_silence_duration": 0.6,
     "min_speech_duration": 0.25,
     "buffer_size_seconds": 60,
     "num_threads": 4,
