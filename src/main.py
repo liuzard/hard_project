@@ -2,12 +2,15 @@
 主程序入口
 整合所有模块，实现持续的录音、VAD、ASR和关键词检测
 支持实时录音或使用录音文件模拟
+使用多线程架构避免 ASR 处理阻塞录音
 """
 
 import sys
 import time
 import signal
 import wave
+import threading
+import queue
 from pathlib import Path
 from datetime import datetime
 
@@ -164,7 +167,7 @@ class FileAudioSimulator:
 
 
 class VoiceKeywordDetector:
-    """语音关键词检测系统"""
+    """语音关键词检测系统（多线程架构）"""
 
     def __init__(self, audio_file: str = None, fast_mode: bool = False):
         """
@@ -211,6 +214,11 @@ class VoiceKeywordDetector:
         self.audio_recorder = None
         self.file_simulator = None
 
+        # ASR 处理队列和线程（避免阻塞录音）
+        self._asr_queue = queue.Queue()
+        self._asr_thread = None
+        self._asr_thread_running = False
+
         # 统计信息
         self.stats = {
             "total_keywords_detected": 0,
@@ -221,6 +229,7 @@ class VoiceKeywordDetector:
             "last_detection_time": None,
             "last_asr_time": None
         }
+        self._stats_lock = threading.Lock()
 
         # 控制标志
         self.is_running = False
@@ -231,8 +240,8 @@ class VoiceKeywordDetector:
         self._last_chunk_time: float = None
 
         # 状态心跳相关
-        self._last_activity_time: float = None       # 上次有声活动的时间（用于心跳计时）
-        self._heartbeat_interval: float = 10.0      # 心跳间隔（秒）
+        self._last_activity_time: float = None
+        self._heartbeat_interval: float = 10.0
 
         # 模拟时间偏移（用于文件模拟模式）
         self._simulated_time_offset: float = 0
@@ -242,8 +251,7 @@ class VoiceKeywordDetector:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
     def _signal_handler(self, sig, frame):
-        """信号��理器"""
-        # 防止递归调用
+        """信号处理器"""
         if self._in_signal_handler:
             return
 
@@ -252,9 +260,67 @@ class VoiceKeywordDetector:
         self._stop_requested = True
         self.is_running = False
 
+    def _asr_worker(self):
+        """ASR 处理线程工作函数"""
+        while self._asr_thread_running or not self._asr_queue.empty():
+            try:
+                # 从队列获取语音段，超时 0.1 秒
+                item = self._asr_queue.get(timeout=0.1)
+                if item is None:
+                    break
+
+                samples, buffer_timestamp, real_time = item
+
+                # ASR 处理
+                duration = len(samples) / self.config.sample_rate
+                text = self.asr_processor.process(samples)
+
+                # 打印识别结果
+                timestamp = datetime.now().strftime("%H:%M:%S")
+
+                with self._stats_lock:
+                    self.stats["last_asr_time"] = buffer_timestamp
+
+                if text:
+                    with self._stats_lock:
+                        self.stats["total_asr_results"] += 1
+                    print(f"[{timestamp}] 🎤 识别: {text} ({duration:.1f}s)")
+
+                    # 关键词检测
+                    matched_keyword = self.keyword_detector.detect(text)
+                    if matched_keyword:
+                        # 使用 buffer_timestamp 作为检测时间（用于从缓冲区提取音频）
+                        self._handle_keyword_detection(matched_keyword, buffer_timestamp)
+                else:
+                    print(f"[{timestamp}] 🔊 检测到语音 ({duration:.1f}s) - 无法识别文字")
+
+                self._asr_queue.task_done()
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"[ERROR] ASR 线程异常: {e}")
+
+    def _start_asr_thread(self):
+        """启动 ASR 处理线程"""
+        self._asr_thread_running = True
+        self._asr_thread = threading.Thread(target=self._asr_worker, daemon=True)
+        self._asr_thread.start()
+        print("[INFO] ASR 处理线程已启动")
+
+    def _stop_asr_thread(self):
+        """停止 ASR 处理线程"""
+        self._asr_thread_running = False
+        # 放入 None 作为结束信号
+        self._asr_queue.put(None)
+        if self._asr_thread:
+            self._asr_thread.join(timeout=3.0)
+            self._asr_thread = None
+        print("[INFO] ASR 处理线程已停止")
+
     def process_audio_chunk(self, raw_data: bytes, use_simulated_time: bool = False):
         """
-        处理音频数据块
+        处理音频数据块（轻量级，不阻塞）
 
         Args:
             raw_data: 原始PCM音频数据（int16）
@@ -266,7 +332,6 @@ class VoiceKeywordDetector:
 
         # 计算时间戳
         if use_simulated_time:
-            # 文件模拟模式：使用模拟时间
             if self._simulated_time_offset == 0:
                 self._simulated_time_offset = current_time
             timestamp_for_buffer = current_time - self._simulated_time_offset
@@ -279,54 +344,33 @@ class VoiceKeywordDetector:
         # 2. VAD处理
         self.vad_processor.process(samples)
 
-        # 3. 获取检测到的语音段
+        # 3. 获取检测到的语音段，放入 ASR 队列
         while True:
             speech_segment = self.vad_processor.get_latest_speech_segment()
             if speech_segment is None:
                 break
 
-            # 更新语音段统计
-            self.stats["total_speech_segments"] += 1
+            with self._stats_lock:
+                self.stats["total_speech_segments"] += 1
 
-            # 有声活动，重置空闲计时器（防止心跳误触发）
             self._last_activity_time = current_time
 
-            # 4. ASR处理
-            text, duration = self.asr_processor.process_with_duration(
-                speech_segment.samples
-            )
+            # 将语音段放入 ASR 队列（异步处理，不阻塞）
+            # 传递：samples, buffer时间戳, 当前实际时间
+            self._asr_queue.put((
+                speech_segment.samples,
+                speech_segment.start,  # buffer中的相对时间
+                current_time           # 实际时间（用于保存文件名）
+            ))
 
-            # 打印ASR识别结果（即使为空也打印，显示处理状态）
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            # 用语音段起始时间作为参考时间，保持一致性
-            self.stats["last_asr_time"] = speech_segment.start
-
-            if text:
-                self.stats["total_asr_results"] += 1
-                print(f"[{timestamp}] 🎤 识别: {text} ({duration:.1f}s)")
-            else:
-                # 显示检测到语音但未能识别
-                print(f"[{timestamp}] 🔊 检测到语音 ({duration:.1f}s) - 无法识别文字")
-
-            # 5. 关键词检测
-            # 注意：使用语音段自身的起始时间戳（speech_segment.start）而非 current_time，
-            # 确保保存的音频窗口与语音段真实时间对齐。
-            if text:
-                matched_keyword = self.keyword_detector.detect(text)
-                if matched_keyword:
-                    self._handle_keyword_detection(matched_keyword, speech_segment.start)
-
-        # 6. 重置VAD状态（仅在音频流出现明显中断时）
-        # 若两个音频块之间的时间间隔超过 VAD 最小静音时长的 3 倍，
-        # 说明录音可能出现过中断，此时 reset() 清理残留状态，避免误检。
+        # 4. 重置VAD状态（仅在音频流出现明显中断时）
         if self._last_chunk_time is not None:
             gap = current_time - self._last_chunk_time
             if gap > self.config.vad_min_silence_duration * 3:
                 self.vad_processor.reset()
         self._last_chunk_time = current_time
 
-        # 7. 状态心跳：每 _heartbeat_interval 秒无活动时打印一行，保持终端可见进度
-        #    有活动时（self._last_activity_time 会更新）不额外打印，避免干扰正常输出
+        # 5. 状态心跳
         if self._last_activity_time is None:
             self._last_activity_time = current_time
 
@@ -335,40 +379,49 @@ class VoiceKeywordDetector:
             elapsed = current_time - self.stats["start_time"]
             buf_stats = self.audio_buffer.get_stats()
             status = "● 录音正常" if buf_stats["is_filled"] else "○ 等待缓冲区填满"
+            queue_size = self._asr_queue.qsize()
+            with self._stats_lock:
+                seg_count = self.stats["total_speech_segments"]
+                asr_count = self.stats["total_asr_results"]
+                kw_count = self.stats["total_keywords_detected"]
             print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                   f"[{elapsed:.0f}s] {status} | "
-                  f"已检测 {self.stats['total_speech_segments']} 个语音段  "
-                  f"{self.stats['total_asr_results']} 次识别  "
-                  f"{self.stats['total_keywords_detected']} 个关键词")
+                  f"语音段: {seg_count} | 识别: {asr_count} | "
+                  f"关键词: {kw_count} | ASR队列: {queue_size}")
             self._last_activity_time = current_time
 
-    def _handle_keyword_detection(self, keyword: str, detection_time: float):
+    def _handle_keyword_detection(self, keyword: str, buffer_time: float):
         """
         处理关键词检测事件
 
         Args:
             keyword: 检测到的关键词
-            detection_time: 检测时间戳
+            buffer_time: 缓冲区中的相对时间（秒），用于提取音频
         """
-        self.stats["total_keywords_detected"] += 1
-        self.stats["last_detection_time"] = detection_time
+        with self._stats_lock:
+            self.stats["total_keywords_detected"] += 1
+            self.stats["last_detection_time"] = buffer_time
 
-        # 打印检测信息
-        timestamp = datetime.fromtimestamp(detection_time).strftime("%Y-%m-%d %H:%M:%S")
+        # 使用当前时间作为显示时间
+        current_time = time.time()
+        timestamp_str = datetime.fromtimestamp(current_time).strftime("%Y-%m-%d %H:%M:%S")
+
         print(f"\n*** 检测到关键词: {keyword} ***")
-        print(f"    时间: {timestamp}")
-        print(f"    总检测次数: {self.stats['total_keywords_detected']}")
+        print(f"    时间: {timestamp_str}")
+        print(f"    音频位置: {buffer_time:.1f}秒")
+        with self._stats_lock:
+            print(f"    总检测次数: {self.stats['total_keywords_detected']}")
 
         try:
-            # 保存音频片段
             wav_path, meta_path = self.audio_buffer.save_detected_clip(
                 keyword=keyword,
-                detected_at=detection_time,
+                detected_at=buffer_time,  # 使用 buffer 时间提取音频
                 output_dir=self.config.output_directory,
                 save_metadata=self.config.save_metadata
             )
 
-            self.stats["total_clips_saved"] += 1
+            with self._stats_lock:
+                self.stats["total_clips_saved"] += 1
 
             print(f"    音频已保存: {wav_path.name}")
             if meta_path:
@@ -394,7 +447,6 @@ class VoiceKeywordDetector:
         try:
             # 根据模式选择音频源
             if self.audio_file:
-                # 文件模拟模式
                 self.file_simulator = FileAudioSimulator(
                     self.audio_file,
                     realtime=not self.fast_mode
@@ -403,12 +455,14 @@ class VoiceKeywordDetector:
                 audio_source = self.file_simulator
                 use_simulated_time = True
             else:
-                # 实时录音模式
                 from .audio_recorder import AudioRecorder
                 self.audio_recorder = AudioRecorder()
                 self.audio_recorder.start()
                 audio_source = self.audio_recorder
                 use_simulated_time = False
+
+            # 启动 ASR 处理线程
+            self._start_asr_thread()
 
             self.is_running = True
             self.stats["start_time"] = time.time()
@@ -419,18 +473,16 @@ class VoiceKeywordDetector:
             print("[INFO] 按 Ctrl+C 停止\n")
             print("-" * 60)
 
-            # 主循环
+            # 主循环（只负责读取音频，不阻塞）
             while self.is_running and not self._stop_requested:
-                # 读取音频块
                 raw_data = audio_source.read_chunk()
 
                 if raw_data is None:
-                    # 音频源已停止（文件结束或录音器停止）
                     if self.audio_file:
                         print("\n[INFO] 录音文件播放完毕")
                     break
 
-                # 处理音频
+                # 处理音频（轻量级，不阻塞）
                 self.process_audio_chunk(raw_data, use_simulated_time=use_simulated_time)
 
         except KeyboardInterrupt:
@@ -442,7 +494,6 @@ class VoiceKeywordDetector:
                 traceback.print_exc()
         finally:
             self.stop()
-            # 停止音频源
             if self.audio_recorder:
                 self.audio_recorder.stop()
             if self.file_simulator:
@@ -453,32 +504,54 @@ class VoiceKeywordDetector:
         if not self.is_running:
             return
 
-        # 防止在信号处理器中打印
         if not self._in_signal_handler:
             print("\n[INFO] 正在停止系统...")
 
         self.is_running = False
         self._stop_requested = True
 
-        # 只在非信号处理中打印统计信息
+        # 停止 ASR 线程
+        self._stop_asr_thread()
+
+        # 刷新 VAD 并处理剩余语音段
+        print("[INFO] 处理剩余语音段...")
+        self.vad_processor.flush()
+        while True:
+            speech_segment = self.vad_processor.get_latest_speech_segment()
+            if speech_segment is None:
+                break
+
+            with self._stats_lock:
+                self.stats["total_speech_segments"] += 1
+
+            duration = len(speech_segment.samples) / self.config.sample_rate
+            text = self.asr_processor.process(speech_segment.samples)
+
+            if text:
+                with self._stats_lock:
+                    self.stats["total_asr_results"] += 1
+                print(f"[最终] 🎤 识别: {text} ({duration:.1f}s)")
+
+                matched_keyword = self.keyword_detector.detect(text)
+                if matched_keyword:
+                    self._handle_keyword_detection(matched_keyword, time.time())
+
+        # 打印统计信息
         if not self._in_signal_handler and self.stats["start_time"]:
             runtime = time.time() - self.stats["start_time"]
             print(f"\n" + "=" * 60)
             print("运行统计")
             print("=" * 60)
             print(f"运行时长: {runtime:.1f} 秒 ({runtime/60:.1f} 分钟)")
-            print(f"语音段检测: {self.stats['total_speech_segments']} 次")
-            print(f"ASR识别成功: {self.stats['total_asr_results']} 次")
-            print(f"关键词检测: {self.stats['total_keywords_detected']} 次")
-            print(f"保存音频片段: {self.stats['total_clips_saved']} 个")
+            with self._stats_lock:
+                print(f"语音段检测: {self.stats['total_speech_segments']} 次")
+                print(f"ASR识别成功: {self.stats['total_asr_results']} 次")
+                print(f"关键词检测: {self.stats['total_keywords_detected']} 次")
+                print(f"保存音频片段: {self.stats['total_clips_saved']} 个")
 
-            if self.stats["total_speech_segments"] > 0:
-                asr_rate = (self.stats['total_asr_results'] / self.stats['total_speech_segments']) * 100
-                print(f"识别成功率: {asr_rate:.1f}%")
-
-            if self.stats["total_keywords_detected"] > 0:
-                rate = self.stats["total_keywords_detected"] / (runtime / 60)
-                print(f"关键词检测率: {rate:.2f} 次/分钟")
+                if self.stats["total_speech_segments"] > 0:
+                    asr_rate = (self.stats['total_asr_results'] / self.stats['total_speech_segments']) * 100
+                    print(f"识别成功率: {asr_rate:.1f}%")
 
         if not self._in_signal_handler:
             print("\n[INFO] 系统已停止")
@@ -493,7 +566,6 @@ def main(audio_file: str = None, fast_mode: bool = False):
         fast_mode: 快速模式，不等待实时播放速度（仅在使用文件模拟时有效）
     """
     try:
-        # 创建并启动系统
         system = VoiceKeywordDetector(audio_file=audio_file, fast_mode=fast_mode)
         system.start()
 

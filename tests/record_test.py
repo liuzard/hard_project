@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-简单的60秒录音测试脚本
-直接录制60秒音频并保存为WAV文件
+简单的录音测试脚本
+直接录制指定时长音频并保存为WAV文件
 """
 
 import sys
@@ -18,21 +18,25 @@ except ImportError:
     sys.exit(1)
 
 # 固定参数
-DURATION = 600  # 固定60秒
+DURATION = 600  # 录音时长（秒）
 SAMPLE_RATE = 16000  # 采样率 16kHz
 CHANNELS = 1  # 单声道
 FORMAT = pyaudio.paInt16  # 16-bit PCM
 CHUNK = 1600  # 每次读取帧数
 
+# 输出目录
+OUTPUT_DIR = Path(__file__).parent.parent / "resources"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 # 生成文件名
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-OUTPUT_FILE = f"recording_60s_{timestamp}.wav"
+OUTPUT_FILE = OUTPUT_DIR / f"recording_{DURATION}s_{timestamp}.wav"
 
 print("=" * 60)
-print("60秒录音测试")
+print(f"{DURATION}秒录音测试")
 print("=" * 60)
 print(f"\n录音参数:")
-print(f"  - 时长: {DURATION} 秒（固定）")
+print(f"  - 时长: {DURATION} 秒")
 print(f"  - 采样率: {SAMPLE_RATE} Hz")
 print(f"  - 声道: {CHANNELS}")
 print(f"  - 格式: 16-bit PCM")
@@ -124,16 +128,17 @@ except Exception as e:
     p.terminate()
     sys.exit(1)
 
-finally:
-    p.terminate()
+# 获取采样宽度（在 terminate 之前）
+sample_width = p.get_sample_size(FORMAT)
+p.terminate()
 
 # 保存为WAV文件
 print(f"\n正在保存到: {OUTPUT_FILE}")
 
 try:
-    wf = wave.open(OUTPUT_FILE, 'wb')
+    wf = wave.open(str(OUTPUT_FILE), 'wb')
     wf.setnchannels(CHANNELS)
-    wf.setsampwidth(p.get_sample_size(FORMAT))
+    wf.setsampwidth(sample_width)
     wf.setframerate(SAMPLE_RATE)
     wf.writeframes(b''.join(frames))
     wf.close()
@@ -180,5 +185,5 @@ print(f"\n✓ 录音成功完成！")
 print(f"\n播放录音:")
 print(f"  aplay {OUTPUT_FILE}")
 print("\n或使用主程序进行语音识别:")
-print(f"  python3 main.py")
+print(f"  python run.py -f {OUTPUT_FILE}")
 print("\n" + "=" * 60)

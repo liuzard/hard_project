@@ -1,13 +1,16 @@
 """
 ASR（自动语音识别）处理模块
-使用 SenseVoice 模型进行语音转文字
+支持 Paraformer 和 SenseVoice 模型进行语音转文字
 
 设计说明
 --------
-当前使用 sherpa_onnx.OfflineRecognizer.from_sense_voice()，属于离线（batch）识别模式：
+当前使用 sherpa_onnx.OfflineRecognizer，属于离线（batch）识别模式：
 - 每个语音段（VAD 切分的结果）独立创建 stream、decode、读取结果。
 - 这种方式实现简单，VAD 和 ASR 完全解耦，适合关键词检测这类"听一段识别一段"的场景。
-- 启用了 ITN（逆文本正则化），数字序列会自动还原为人类可读格式。
+
+支持的模型：
+- Paraformer-zh: 中文语音识别，使用 from_paraformer()
+- SenseVoice: 多语言识别，使用 from_sense_voice()
 
 未来若需低延迟实时流式识别（边听边识别），需要切换到 OnlineRecognizer：
 1. 创建单个持久化 OnlineStream，在主循环中持续 feed() 音频块。
@@ -31,6 +34,7 @@ class ASRProcessor:
         """初始化ASR处理器"""
         self.config = get_config()
         self.recognizer = None
+        self.model_type = None
         self._init_asr()
 
     def _init_asr(self):
@@ -43,6 +47,42 @@ class ASRProcessor:
 
         if not self.config.asr_tokens_path.exists():
             raise FileNotFoundError(f"ASR tokens文件不存在: {self.config.asr_tokens_path}")
+
+        # 根据模型目录名称判断模型类型
+        model_dir_name = self.config.asr_model_dir.name.lower()
+
+        if "paraformer" in model_dir_name:
+            # 使用 Paraformer 模型
+            self._init_paraformer()
+        elif "sense" in model_dir_name:
+            # 使用 SenseVoice 模型
+            self._init_sense_voice()
+        else:
+            # 默认尝试 Paraformer
+            self._init_paraformer()
+
+    def _init_paraformer(self):
+        """初始化 Paraformer 模型"""
+        self.model_type = "paraformer"
+
+        # 创建离线识别器（使用 Paraformer）
+        self.recognizer = sherpa_onnx.OfflineRecognizer.from_paraformer(
+            paraformer=str(self.config.asr_model_path),
+            tokens=str(self.config.asr_tokens_path),
+            num_threads=self.config.asr_num_threads,
+            sample_rate=16000,
+            feature_dim=80,
+            decoding_method="greedy_search",
+            debug=False,
+        )
+
+        print("[INFO] ASR模型加载完成 (Paraformer-zh)")
+        print(f"       - 模型文件: {self.config.asr_model_file}")
+        print(f"       - 线程数: {self.config.asr_num_threads}")
+
+    def _init_sense_voice(self):
+        """初始化 SenseVoice 模型"""
+        self.model_type = "sense_voice"
 
         # 创建离线识别器（使用 SenseVoice）
         self.recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(

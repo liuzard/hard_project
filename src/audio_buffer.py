@@ -200,15 +200,15 @@ class AudioBuffer:
 
         Args:
             keyword: 检测到的关键词
-            detected_at: 检测到关键词的时间戳
+            detected_at: 检测到关键词的缓冲区相对时间（秒）
             output_dir: 输出目录
             save_metadata: 是否保存元数据
 
         Returns:
             (wav文件路径, 元数据文件路径)
         """
-        # 生成文件名
-        timestamp_str = datetime.fromtimestamp(detected_at).strftime("%Y%m%d_%H%M%S")
+        # 生成文件名（使用当前时间）
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         wav_filename = f"{keyword}_{timestamp_str}.wav"
         wav_path = output_dir / wav_filename
 
@@ -223,8 +223,7 @@ class AudioBuffer:
         if save_metadata:
             metadata = {
                 "keyword": keyword,
-                "detected_at": datetime.fromtimestamp(detected_at).isoformat(),
-                "detected_timestamp": detected_at,
+                "buffer_time_seconds": detected_at,  # 缓冲区中的相对时间
                 "duration": len(audio_data) / self.sample_rate,
                 "sample_rate": self.sample_rate,
                 "channels": 1,

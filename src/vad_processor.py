@@ -13,16 +13,19 @@ from .config import get_config
 class SpeechSegmentWrapper:
     """语音段包装器，用于在 pop 后保留 samples 数据"""
 
-    def __init__(self, original_segment):
+    def __init__(self, original_segment, sample_rate: int = 16000):
         """
         初始化包装器
 
         Args:
             original_segment: 原始的 SpeechSegment 对象
+            sample_rate: 采样率，用于将采样点数转换为秒
         """
         # 在 pop 之前复制 samples 数据
         self._samples = np.array(original_segment.samples, copy=True)
-        self._start = original_segment.start
+        # start 是采样点数，转换为秒
+        self._start = original_segment.start / sample_rate
+        self._sample_rate = sample_rate
 
     @property
     def samples(self) -> np.ndarray:
@@ -31,7 +34,7 @@ class SpeechSegmentWrapper:
 
     @property
     def start(self) -> float:
-        """获取语音段开始时间"""
+        """获取语音段开始时间（秒）"""
         return self._start
 
 
@@ -129,7 +132,7 @@ class VADProcessor:
 
         speech_segment = self.vad.front
         # 在 pop 之前创建包装器，复制 samples 数据
-        wrapper = SpeechSegmentWrapper(speech_segment)
+        wrapper = SpeechSegmentWrapper(speech_segment, sample_rate=self.config.sample_rate)
         self.vad.pop()
         return wrapper
 

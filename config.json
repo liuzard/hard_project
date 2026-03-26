@@ -16,7 +16,7 @@
     "window_size": 512
   },
   "asr": {
-    "model_dir": "./models/02-asr/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+    "model_dir": "./models/02-asr/sherpa-onnx-paraformer-zh-2023-09-14",
     "model_file": "model.int8.onnx",
     "tokens_file": "tokens.txt",
     "num_threads": 4
@@ -25,7 +25,8 @@
     "你好",
     "帮助",
     "紧急",
-    "救命"
+    "救命",
+    "李思逊"
   ],
   "output": {
     "directory": "./detected_clips",
