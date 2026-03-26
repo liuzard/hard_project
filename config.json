@@ -16,10 +16,21 @@
     "window_size": 512
   },
   "asr": {
-    "model_dir": "./models/02-asr/sherpa-onnx-paraformer-zh-2023-09-14",
-    "model_file": "model.int8.onnx",
-    "tokens_file": "tokens.txt",
-    "num_threads": 4
+    "model_type": "paraformer-zh",
+    "num_threads": 4,
+    "use_itn": true,
+    "models": {
+      "paraformer-zh": {
+        "model_dir": "./models/02-asr/sherpa-onnx-paraformer-zh-2023-09-14",
+        "model_file": "model.int8.onnx",
+        "tokens_file": "tokens.txt"
+      },
+      "sense-voice": {
+        "model_dir": "./models/02-asr/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        "model_file": "model.int8.onnx",
+        "tokens_file": "tokens.txt"
+      }
+    }
   },
   "keywords": [
     "你好",

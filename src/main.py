@@ -328,15 +328,18 @@ class VoiceKeywordDetector:
         """
         # 转换音频格式
         samples = pcm_int16_to_float32(raw_data)
-        current_time = time.time()
+        current_real_time = time.time()
 
-        # 计算时间戳
-        if use_simulated_time:
-            if self._simulated_time_offset == 0:
-                self._simulated_time_offset = current_time
-            timestamp_for_buffer = current_time - self._simulated_time_offset
-        else:
-            timestamp_for_buffer = current_time
+        # 计算时间戳：统一使用相对时间（从程序开始计算的秒数）
+        # 文件模式和实时模式都使用相同的时间系统
+        chunk_duration = len(raw_data) / 2 / self.config.sample_rate  # 字节数/2 = 样本数
+
+        if self._simulated_time_offset == 0:
+            # 第一次调用，初始化时间偏移
+            self._simulated_time_offset = current_real_time
+
+        # 计算当前块的结束时间戳（相对时间，从0开始）
+        timestamp_for_buffer = current_real_time - self._simulated_time_offset
 
         # 1. 将音频数据添加到循环缓冲区
         self.audio_buffer.append(samples, timestamp_for_buffer)
@@ -353,42 +356,40 @@ class VoiceKeywordDetector:
             with self._stats_lock:
                 self.stats["total_speech_segments"] += 1
 
-            self._last_activity_time = current_time
+            self._last_activity_time = current_real_time
 
             # 将语音段放入 ASR 队列（异步处理，不阻塞）
             # 传递：samples, buffer时间戳, 当前实际时间
             self._asr_queue.put((
                 speech_segment.samples,
                 speech_segment.start,  # buffer中的相对时间
-                current_time           # 实际时间（用于保存文件名）
+                current_real_time      # 实际时间（用于保存文件名）
             ))
 
-        # 4. 重置VAD状态（仅在音频流出现明显中断时）
-        if self._last_chunk_time is not None:
-            gap = current_time - self._last_chunk_time
-            if gap > self.config.vad_min_silence_duration * 3:
-                self.vad_processor.reset()
-        self._last_chunk_time = current_time
+        # 4. 更新最后活动时间（用于心跳检测）
+        self._last_chunk_time = current_real_time
 
         # 5. 状态心跳
         if self._last_activity_time is None:
-            self._last_activity_time = current_time
+            self._last_activity_time = current_real_time
 
-        idle = current_time - self._last_activity_time
+        idle = current_real_time - self._last_activity_time
         if idle >= self._heartbeat_interval:
-            elapsed = current_time - self.stats["start_time"]
-            buf_stats = self.audio_buffer.get_stats()
-            status = "● 录音正常" if buf_stats["is_filled"] else "○ 等待缓冲区填满"
-            queue_size = self._asr_queue.qsize()
+            # 读取 start_time 需要加锁保护
             with self._stats_lock:
+                elapsed = current_real_time - self.stats["start_time"]
                 seg_count = self.stats["total_speech_segments"]
                 asr_count = self.stats["total_asr_results"]
                 kw_count = self.stats["total_keywords_detected"]
+
+            buf_stats = self.audio_buffer.get_stats()
+            status = "● 录音正常" if buf_stats["is_filled"] else "○ 等待缓冲区填满"
+            queue_size = self._asr_queue.qsize()
             print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                   f"[{elapsed:.0f}s] {status} | "
                   f"语音段: {seg_count} | 识别: {asr_count} | "
                   f"关键词: {kw_count} | ASR队列: {queue_size}")
-            self._last_activity_time = current_time
+            self._last_activity_time = current_real_time
 
     def _handle_keyword_detection(self, keyword: str, buffer_time: float):
         """
@@ -534,7 +535,8 @@ class VoiceKeywordDetector:
 
                 matched_keyword = self.keyword_detector.detect(text)
                 if matched_keyword:
-                    self._handle_keyword_detection(matched_keyword, time.time())
+                    # 使用语音段自己的时间戳（相对于缓冲区开始时间）
+                    self._handle_keyword_detection(matched_keyword, speech_segment.start)
 
         # 打印统计信息
         if not self._in_signal_handler and self.stats["start_time"]:

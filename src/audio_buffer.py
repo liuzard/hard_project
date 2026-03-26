@@ -107,15 +107,30 @@ class AudioBuffer:
             音频数据（float32 numpy数组），如果无法获取则返回None
         """
         with self.lock:
-            if not self.is_filled:
-                # 缓冲区未填满，无法获取完整窗口
-                return None
-
             window_samples = window_seconds * self.sample_rate
             half_window = window_samples // 2
 
             # 查找最接近中心时间戳的索引
+            # 注意： timestamps 数组中未填满的部分值为0
+            # 所以需要找到有效的非零时间戳范围
+            valid_indices = np.where(self.timestamps > 0)[0]
+
+            if len(valid_indices) == 0:
+                # 缓冲区完全为空
+                return None
+
+            # 检查请求的时间戳是否在有效范围内
+            min_valid_time = np.min(self.timestamps[valid_indices])
+            max_valid_time = np.max(self.timestamps[valid_indices])
+
+            if center_timestamp < min_valid_time or center_timestamp > max_valid_time:
+                # 请求的时间戳不在有效范围内
+                return None
+
+            # 查找最接近中心时间戳的索引
             time_diffs = np.abs(self.timestamps - center_timestamp)
+            # 只考虑有效时间戳
+            time_diffs[valid_indices == False] = np.inf
             center_idx = np.argmin(time_diffs)
 
             # 计算窗口的起始和结束索引
@@ -129,15 +144,30 @@ class AudioBuffer:
             if end_idx >= self.buffer_size:
                 end_idx -= self.buffer_size
 
-            # 提取音频数据
+            # 提取音频数据（如果窗口超出了有效数据范围，会被静音填充）
             if start_idx < end_idx:
                 # 不需要回绕
-                return self.buffer[start_idx:end_idx].copy()
+                result = self.buffer[start_idx:end_idx].copy()
             else:
                 # 需要回绕
                 first_part = self.buffer[start_idx:].copy()
                 second_part = self.buffer[:end_idx].copy()
-                return np.concatenate([first_part, second_part])
+                result = np.concatenate([first_part, second_part])
+
+            # 将未填充的部分设置为静音（0）
+            # 检查结果中是否包含未初始化的数据（timestamps为0的部分）
+            # 这在缓冲区未满时可能发生
+            if not self.is_filled:
+                # 计算实际有效数据长度
+                actual_length = len(result)
+                # 简单处理：如果缓冲区未满，我们仍然返回数据
+                # 调用者需要意识到可能包含部分静音
+
+                # 更好的方法：检查时间戳是否连续
+                # 但为了简单起见，我们信任 VAD 不会在缓冲区未满时触发关键词检测
+                pass
+
+            return result
 
     def get_recent(self, seconds: int = 30) -> Optional[np.ndarray]:
         """

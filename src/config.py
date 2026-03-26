@@ -31,8 +31,20 @@ class Config:
 
         # 转换路径为Path对象
         config['vad']['model_path'] = Path(config['vad']['model_path'])
-        config['asr']['model_dir'] = Path(config['asr']['model_dir'])
         config['output']['directory'] = Path(config['output']['directory'])
+
+        # 处理ASR配置：支持新旧两种格式
+        # 新格式：model_dir 在 models 下面
+        # 旧格式：model_dir 直接在 asr 下面
+        if 'models' in config['asr']:
+            # 新格式：转换所有预配置模型的路径
+            for model_name, model_config in config['asr']['models'].items():
+                if 'model_dir' in model_config:
+                    config['asr']['models'][model_name]['model_dir'] = Path(model_config['model_dir'])
+        else:
+            # 旧格式：直接转换 model_dir（向后兼容）
+            if 'model_dir' in config['asr']:
+                config['asr']['model_dir'] = Path(config['asr']['model_dir'])
 
         return config
 
@@ -41,8 +53,18 @@ class Config:
         # 将Path对象转换回字符串
         config_copy = self._config.copy()
         config_copy['vad']['model_path'] = str(config_copy['vad']['model_path'])
-        config_copy['asr']['model_dir'] = str(config_copy['asr']['model_dir'])
         config_copy['output']['directory'] = str(config_copy['output']['directory'])
+
+        # 处理ASR配置路径转换
+        if 'models' in config_copy['asr']:
+            # 新格式：转换所有预配置模型的路径
+            for model_name, model_config in config_copy['asr']['models'].items():
+                if 'model_dir' in model_config and isinstance(model_config['model_dir'], Path):
+                    config_copy['asr']['models'][model_name]['model_dir'] = str(model_config['model_dir'])
+        else:
+            # 旧格式：直接转换 model_dir
+            if 'model_dir' in config_copy['asr'] and isinstance(config_copy['asr']['model_dir'], Path):
+                config_copy['asr']['model_dir'] = str(config_copy['asr']['model_dir'])
 
         with open(self.config_path, 'w', encoding='utf-8') as f:
             json.dump(config_copy, f, indent=2, ensure_ascii=False)
@@ -112,19 +134,41 @@ class Config:
         return self._config['vad'].get('window_size', 512)
 
     @property
+    def asr_model_type(self) -> str:
+        """ASR模型类型（paraformer-zh、sense-voice等）"""
+        return self._config['asr'].get('model_type', 'paraformer-zh')
+
+    @property
+    def _asr_model_config(self) -> Dict[str, Any]:
+        """获取当前模型配置"""
+        model_type = self.asr_model_type
+        models_config = self._config['asr'].get('models', {})
+
+        # 如果有预配置的模型列表，从列表中获取
+        if model_type in models_config:
+            return models_config[model_type]
+
+        # 兼容旧配置格式（直接在asr下配置）
+        return {
+            'model_dir': self._config['asr'].get('model_dir', './models/02-asr/sherpa-onnx-paraformer-zh-2023-09-14'),
+            'model_file': self._config['asr'].get('model_file', 'model.int8.onnx'),
+            'tokens_file': self._config['asr'].get('tokens_file', 'tokens.txt')
+        }
+
+    @property
     def asr_model_dir(self) -> Path:
         """ASR模型目录"""
-        return self._config['asr']['model_dir']
+        return Path(self._asr_model_config['model_dir'])
 
     @property
     def asr_model_file(self) -> str:
         """ASR模型文件名"""
-        return self._config['asr']['model_file']
+        return self._asr_model_config['model_file']
 
     @property
     def asr_tokens_file(self) -> str:
         """ASR tokens文件名"""
-        return self._config['asr']['tokens_file']
+        return self._asr_model_config['tokens_file']
 
     @property
     def asr_num_threads(self) -> int:
@@ -132,14 +176,19 @@ class Config:
         return self._config['asr']['num_threads']
 
     @property
+    def asr_use_itn(self) -> bool:
+        """是否启用ITN（Inverse Text Normalization）"""
+        return self._config['asr'].get('use_itn', True)
+
+    @property
     def asr_model_path(self) -> Path:
         """完整的ASR模型路径"""
-        return self._config['asr']['model_dir'] / self._config['asr']['model_file']
+        return self.asr_model_dir / self.asr_model_file
 
     @property
     def asr_tokens_path(self) -> Path:
         """完整的ASR tokens路径"""
-        return self._config['asr']['model_dir'] / self._config['asr']['tokens_file']
+        return self.asr_model_dir / self.asr_tokens_file
 
     @property
     def keywords(self) -> List[str]:

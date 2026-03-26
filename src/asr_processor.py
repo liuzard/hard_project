@@ -48,17 +48,18 @@ class ASRProcessor:
         if not self.config.asr_tokens_path.exists():
             raise FileNotFoundError(f"ASR tokens文件不存在: {self.config.asr_tokens_path}")
 
-        # 根据模型目录名称判断模型类型
-        model_dir_name = self.config.asr_model_dir.name.lower()
+        # 根据配置文件中的模型类型选择模型
+        model_type = self.config.asr_model_type.lower()
 
-        if "paraformer" in model_dir_name:
+        if model_type == "paraformer-zh" or model_type == "paraformer":
             # 使用 Paraformer 模型
             self._init_paraformer()
-        elif "sense" in model_dir_name:
+        elif model_type == "sense-voice" or model_type == "sensevoice":
             # 使用 SenseVoice 模型
             self._init_sense_voice()
         else:
-            # 默认尝试 Paraformer
+            # 未知模型类型，尝试 Paraformer 作为默认
+            print(f"[WARN] 未知的ASR模型类型: {model_type}，使用默认的 Paraformer 模型")
             self._init_paraformer()
 
     def _init_paraformer(self):
@@ -77,6 +78,7 @@ class ASRProcessor:
         )
 
         print("[INFO] ASR模型加载完成 (Paraformer-zh)")
+        print(f"       - 模型类型: {self.config.asr_model_type}")
         print(f"       - 模型文件: {self.config.asr_model_file}")
         print(f"       - 线程数: {self.config.asr_num_threads}")
 
@@ -93,12 +95,14 @@ class ASRProcessor:
             feature_dim=80,
             decoding_method="greedy_search",
             debug=False,
-            use_itn=True,  # 启用 ITN
+            use_itn=self.config.asr_use_itn,  # 根据配置决定是否启用 ITN
         )
 
         print("[INFO] ASR模型加载完成 (SenseVoice)")
+        print(f"       - 模型类型: {self.config.asr_model_type}")
         print(f"       - 模型文件: {self.config.asr_model_file}")
         print(f"       - 线程数: {self.config.asr_num_threads}")
+        print(f"       - ITN启用: {self.config.asr_use_itn}")
 
     def process(self, samples: np.ndarray) -> str:
         """
