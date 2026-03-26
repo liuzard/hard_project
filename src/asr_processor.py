@@ -1,12 +1,13 @@
 """
 ASR（自动语音识别）处理模块
-使用 Paraformer-zh 模型进行语音转文字
+使用 SenseVoice 模型进行语音转文字
 
 设计说明
 --------
-当前使用 sherpa_onnx.OfflineRecognizer.from_paraformer()，属于离线（batch）识别模式：
+当前使用 sherpa_onnx.OfflineRecognizer.from_sense_voice()，属于离线（batch）识别模式：
 - 每个语音段（VAD 切分的结果）独立创建 stream、decode、读取结果。
 - 这种方式实现简单，VAD 和 ASR 完全解耦，适合关键词检测这类"听一段识别一段"的场景。
+- 启用了 ITN（逆文本正则化），数字序列会自动还原为人类可读格式。
 
 未来若需低延迟实时流式识别（边听边识别），需要切换到 OnlineRecognizer：
 1. 创建单个持久化 OnlineStream，在主循环中持续 feed() 音频块。
@@ -43,18 +44,19 @@ class ASRProcessor:
         if not self.config.asr_tokens_path.exists():
             raise FileNotFoundError(f"ASR tokens文件不存在: {self.config.asr_tokens_path}")
 
-        # 创建离线识别器（使用 Paraformer-zh）
-        self.recognizer = sherpa_onnx.OfflineRecognizer.from_paraformer(
-            paraformer=str(self.config.asr_model_path),
+        # 创建离线识别器（使用 SenseVoice）
+        self.recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+            model=str(self.config.asr_model_path),
             tokens=str(self.config.asr_tokens_path),
             num_threads=self.config.asr_num_threads,
             sample_rate=16000,
             feature_dim=80,
             decoding_method="greedy_search",
             debug=False,
+            use_itn=True,  # 启用 ITN
         )
 
-        print("[INFO] ASR模型加载完成 (Paraformer-zh)")
+        print("[INFO] ASR模型加载完成 (SenseVoice)")
         print(f"       - 模型文件: {self.config.asr_model_file}")
         print(f"       - 线程数: {self.config.asr_num_threads}")
 

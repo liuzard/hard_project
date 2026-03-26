@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ASR测试脚本 (VAD 增强版)
-读取WAV文件 -> VAD自动切音断句 -> Paraformer-zh逐句识别 -> 拼接结果
+读取WAV文件 -> VAD自动切音断句 -> SenseVoice逐句识别 -> 拼接结果
 """
 
 import sys
@@ -92,21 +92,22 @@ def create_vad_detector(config):
 
 
 def create_asr_recognizer(config):
-    """创建 ASR 识别器 (Paraformer-zh)"""
-    print("\n[3/3] 正在加载 ASR 模型 (Paraformer-zh)...")
+    """创建 ASR 识别器 (SenseVoice)"""
+    print("\n[3/3] 正在加载 ASR 模型 (SenseVoice)...")
     if not config.asr_model_path.exists():
         raise FileNotFoundError(f"ASR模型文件不存在: {config.asr_model_path}")
 
-    recognizer = sherpa_onnx.OfflineRecognizer.from_paraformer(
-        paraformer=str(config.asr_model_path),
+    recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+        model=str(config.asr_model_path),
         tokens=str(config.asr_tokens_path),
         num_threads=config.asr_num_threads,
         sample_rate=16000,
         feature_dim=80,
         decoding_method="greedy_search",
         debug=False,
+        use_itn=True,  # 启用 ITN（逆文本正则化），将数字序列还原为人类可读格式
     )
-    print("  ✓ ASR 模型加载完成 (Paraformer-zh)")
+    print("  ✓ ASR 模型加载完成 (SenseVoice)")
     return recognizer
 
 
