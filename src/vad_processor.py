@@ -10,6 +10,31 @@ from typing import Optional
 from .config import get_config
 
 
+class SpeechSegmentWrapper:
+    """语音段包装器，用于在 pop 后保留 samples 数据"""
+
+    def __init__(self, original_segment):
+        """
+        初始化包装器
+
+        Args:
+            original_segment: 原始的 SpeechSegment 对象
+        """
+        # 在 pop 之前复制 samples 数据
+        self._samples = np.array(original_segment.samples, copy=True)
+        self._start = original_segment.start
+
+    @property
+    def samples(self) -> np.ndarray:
+        """获取音频样本数据"""
+        return self._samples
+
+    @property
+    def start(self) -> float:
+        """获取语音段开始时间"""
+        return self._start
+
+
 class VADProcessor:
     """VAD处理器"""
 
@@ -92,19 +117,21 @@ class VADProcessor:
 
         return segments
 
-    def get_latest_speech_segment(self) -> Optional['sherpa_onnx.SpeechSegment']:
+    def get_latest_speech_segment(self) -> Optional['SpeechSegmentWrapper']:
         """
         获取最新的语音段
 
         Returns:
-            语音段对象，如果没有则返回None
+            语音段对象（包装器），如果没有则返回None
         """
         if self.vad is None or self.vad.empty():
             return None
 
         speech_segment = self.vad.front
+        # 在 pop 之前创建包装器，复制 samples 数据
+        wrapper = SpeechSegmentWrapper(speech_segment)
         self.vad.pop()
-        return speech_segment
+        return wrapper
 
     def flush(self):
         """刷新VAD缓冲区，强制输出剩余的语音段"""
