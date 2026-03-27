@@ -129,8 +129,9 @@ class AudioBuffer:
 
             # 查找最接近中心时间戳的索引
             time_diffs = np.abs(self.timestamps - center_timestamp)
-            # 只考虑有效时间戳
-            time_diffs[valid_indices == False] = np.inf
+            # 只考虑有效时间戳（时间戳>0的位置）
+            valid_mask = self.timestamps > 0
+            time_diffs[~valid_mask] = np.inf
             center_idx = np.argmin(time_diffs)
 
             # 计算窗口的起始和结束索引

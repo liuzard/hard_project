@@ -462,6 +462,10 @@ class VoiceKeywordDetector:
                 audio_source = self.audio_recorder
                 use_simulated_time = False
 
+            # 重置 VAD，确保时间系统与 AudioBuffer 同步（都从 0 开始）
+            self.vad_processor.reset()
+            self._simulated_time_offset = 0  # 重置时间偏移量
+
             # 启动 ASR 处理线程
             self._start_asr_thread()
 
