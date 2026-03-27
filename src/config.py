@@ -162,13 +162,13 @@ class Config:
 
     @property
     def asr_model_file(self) -> str:
-        """ASR模型文件名"""
-        return self._asr_model_config['model_file']
+        """ASR模型文件名（传统模型使用）"""
+        return self._asr_model_config.get('model_file', '')
 
     @property
     def asr_tokens_file(self) -> str:
-        """ASR tokens文件名"""
-        return self._asr_model_config['tokens_file']
+        """ASR tokens文件名（传统模型使用）"""
+        return self._asr_model_config.get('tokens_file', '')
 
     @property
     def asr_num_threads(self) -> int:
@@ -236,11 +236,32 @@ class Config:
         if not self.vad_model_path.exists():
             errors.append(f"VAD模型文件不存在: {self.vad_model_path}")
 
-        if not self.asr_model_path.exists():
-            errors.append(f"ASR模型文件不存在: {self.asr_model_path}")
+        # 根据模型类型检查 ASR 模型文件
+        model_type = self.asr_model_type.lower()
+        if model_type == "funasr-nano":
+            # FunASR-nano 使用多文件结构
+            model_config = self._asr_model_config
+            model_dir = self.asr_model_dir
 
-        if not self.asr_tokens_path.exists():
-            errors.append(f"ASR tokens文件不存在: {self.asr_tokens_path}")
+            encoder_adaptor = model_dir / model_config.get('encoder_adaptor', 'encoder_adaptor.int8.onnx')
+            llm = model_dir / model_config.get('llm', 'llm.int8.onnx')
+            embedding = model_dir / model_config.get('embedding', 'embedding.int8.onnx')
+            tokenizer_dir = model_dir / model_config.get('tokenizer_dir', 'Qwen3-0.6B')
+
+            if not encoder_adaptor.exists():
+                errors.append(f"FunASR-nano encoder_adaptor 不存在: {encoder_adaptor}")
+            if not llm.exists():
+                errors.append(f"FunASR-nano llm 不存在: {llm}")
+            if not embedding.exists():
+                errors.append(f"FunASR-nano embedding 不存在: {embedding}")
+            if not tokenizer_dir.exists():
+                errors.append(f"FunASR-nano tokenizer 目录不存在: {tokenizer_dir}")
+        else:
+            # 传统模型（paraformer, sense-voice 等）
+            if not self.asr_model_path.exists():
+                errors.append(f"ASR模型文件不存在: {self.asr_model_path}")
+            if not self.asr_tokens_path.exists():
+                errors.append(f"ASR tokens文件不存在: {self.asr_tokens_path}")
 
         # 检查关键词列表
         if not self.keywords:

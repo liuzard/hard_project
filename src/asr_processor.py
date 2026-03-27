@@ -57,6 +57,9 @@ class ASRProcessor:
         elif model_type == "sense-voice" or model_type == "sensevoice":
             # 使用 SenseVoice 模型
             self._init_sense_voice()
+        elif model_type == "funasr-nano":
+            # 使用 FunASR-nano 模型
+            self._init_funasr_nano()
         else:
             # 未知模型类型，尝试 Paraformer 作为默认
             print(f"[WARN] 未知的ASR模型类型: {model_type}，使用默认的 Paraformer 模型")
@@ -103,6 +106,49 @@ class ASRProcessor:
         print(f"       - 模型文件: {self.config.asr_model_file}")
         print(f"       - 线程数: {self.config.asr_num_threads}")
         print(f"       - ITN启用: {self.config.asr_use_itn}")
+
+    def _init_funasr_nano(self):
+        """初始化 FunASR-nano 模型"""
+        self.model_type = "funasr_nano"
+
+        # 获取模型配置
+        model_config = self.config._asr_model_config
+        model_dir = self.config.asr_model_dir
+
+        # 构建各组件路径
+        encoder_adaptor_path = model_dir / model_config.get('encoder_adaptor', 'encoder_adaptor.int8.onnx')
+        llm_path = model_dir / model_config.get('llm', 'llm.int8.onnx')
+        embedding_path = model_dir / model_config.get('embedding', 'embedding.int8.onnx')
+        tokenizer_dir = model_dir / model_config.get('tokenizer_dir', 'Qwen3-0.6B')
+
+        # 验证文件存在
+        for path, name in [(encoder_adaptor_path, 'encoder_adaptor'),
+                           (llm_path, 'llm'),
+                           (embedding_path, 'embedding')]:
+            if not path.exists():
+                raise FileNotFoundError(f"FunASR-nano {name} 模型文件不存在: {path}")
+
+        if not tokenizer_dir.exists():
+            raise FileNotFoundError(f"FunASR-nano tokenizer 目录不存在: {tokenizer_dir}")
+
+        # 创建离线识别器（使用 FunASR-nano）
+        self.recognizer = sherpa_onnx.OfflineRecognizer.from_funasr_nano(
+            encoder_adaptor=str(encoder_adaptor_path),
+            llm=str(llm_path),
+            embedding=str(embedding_path),
+            tokenizer=str(tokenizer_dir),
+            num_threads=self.config.asr_num_threads,
+            sample_rate=16000,
+            feature_dim=80,
+            decoding_method="greedy_search",
+            debug=False,
+        )
+
+        print("[INFO] ASR模型加载完成 (FunASR-nano)")
+        print(f"       - 模型类型: {self.config.asr_model_type}")
+        print(f"       - Encoder: {encoder_adaptor_path.name}")
+        print(f"       - LLM: {llm_path.name}")
+        print(f"       - 线程数: {self.config.asr_num_threads}")
 
     def process(self, samples: np.ndarray) -> str:
         """

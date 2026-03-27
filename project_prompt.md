@@ -10,7 +10,7 @@
 
 
 
-VAD采用tenVAD，相关的模型文件已经在项目中。ASR采用SenseVoice-Small，相关的模型文件也项目中。
+VAD采用silero_vad，相关的模型文件已经在项目中。ASR采用paraformer-zh，相关的模型文件也项目中。
 
 请进行完整的项目实现，并给出Readme文档，注意，当前的开发环境为mac os，M1max，开发以树莓派的环境为准。
 下面的代码仅供参考，硬件的信息是准确的，软件需要根据具体的需求优化：
@@ -30,7 +30,7 @@ from datetime import datetime
 
 # ============ 配置参数 ============
 # ASR 模型路径
-MODEL_DIR = Path.home() / "asr-models" / "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+MODEL_DIR = Path.home() / "asr-models" / "sherpa-onnx-paraformer-zh-2023-09-14"
 VAD_MODEL = Path.home() / "asr-models" / "silero_vad.onnx"
 
 # 录音参数

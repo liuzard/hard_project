@@ -29,6 +29,13 @@
         "model_dir": "./models/02-asr/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
         "model_file": "model.int8.onnx",
         "tokens_file": "tokens.txt"
+      },
+      "funasr-nano": {
+        "model_dir": "./models/02-asr/sherpa-onnx-funasr-nano-int8-2025-12-30",
+        "encoder_adaptor": "encoder_adaptor.int8.onnx",
+        "llm": "llm.int8.onnx",
+        "embedding": "embedding.int8.onnx",
+        "tokenizer_dir": "Qwen3-0.6B"
       }
     }
   },
