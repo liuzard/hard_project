@@ -16,7 +16,7 @@
     "window_size": 512
   },
   "asr": {
-    "model_type": "paraformer-zh",
+    "model_type": "sense-voice",
     "num_threads": 4,
     "use_itn": true,
     "models": {
