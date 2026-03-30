@@ -4,6 +4,7 @@ FSMN-VAD（语音活动检测）处理模块
 """
 
 import numpy as np
+import threading
 from pathlib import Path
 from typing import Optional, List, Tuple
 from .config import get_config
@@ -67,15 +68,15 @@ class FSMNVADProcessor:
         self._audio_buffer: List[Tuple[np.ndarray, float]] = []
         self._buffer_duration: float = 30.0  # 缓存最近30秒的音频
 
-        # 内部跟踪的累计音频时间（秒）
-        self._accumulated_time: float = 0.0
-
         # 当前正在进行的语音段
         self._current_segment_start: Optional[float] = None
         self._current_segment_samples: List[np.ndarray] = []
 
         # 已完成的语音段队列
         self._completed_segments: List[FSMNSpeechSegment] = []
+
+        # 线程锁保护
+        self._lock = threading.Lock()
 
         self._init_vad()
 
@@ -114,66 +115,70 @@ class FSMNVADProcessor:
 
         Args:
             samples: 音频数据（float32 numpy数组，归一化到[-1, 1]）
-            timestamp: 当前音频块的时间戳（秒），如果为None则使用内部累计时间
+            timestamp: 当前音频块的开始时间戳（秒），从程序启动后计算的音频时间
         """
         if self.model is None:
             return
 
-        # 计算当前块的时长
-        chunk_duration = len(samples) / self._sample_rate
+        with self._lock:
+            # 计算当前块的时长
+            chunk_duration = len(samples) / self._sample_rate
 
-        # 使用内部累计时间作为缓冲区时间戳
-        buffer_timestamp = self._accumulated_time
+            # timestamp 是当前块的开始时间
+            buffer_timestamp = timestamp if timestamp is not None else 0.0
 
-        # 缓存音频数据
-        self._audio_buffer.append((samples.copy(), buffer_timestamp))
-        self._prune_buffer()
+            # 缓存音频数据
+            self._audio_buffer.append((samples.copy(), buffer_timestamp))
+            self._prune_buffer()
 
-        # 更新累计时间
-        self._accumulated_time += chunk_duration
+            # 调用 FSMN-VAD 进行检测
+            segments = self.model(samples, param_dict=self.param_dict)
 
-        # 调用 FSMN-VAD 进行检测
-        segments = self.model(samples, param_dict=self.param_dict)
+            # 处理返回的语音段事件
+            if segments and len(segments) > 0:
+                for batch_segs in segments:
+                    for seg in batch_segs:
+                        start_ms, end_ms = seg
 
-        # 处理返回的语音段事件
-        if segments and len(segments) > 0:
-            for batch_segs in segments:
-                for seg in batch_segs:
-                    start_ms, end_ms = seg
+                        # 处理语音段开始事件
+                        if start_ms != -1:
+                            self._current_segment_start = start_ms / 1000.0  # 转换为秒
+                            self._current_segment_samples = []
+                            print(f"[VAD] 语音段开始: {start_ms}ms")
 
-                    # 处理语音段开始事件
-                    if start_ms != -1:
-                        self._current_segment_start = start_ms / 1000.0  # 转换为秒
-                        self._current_segment_samples = []
-                        print(f"[VAD] 语音段开始: {start_ms}ms")
+                        # 处理语音段结束事件
+                        if end_ms != -1 and self._current_segment_start is not None:
+                            end_sec = end_ms / 1000.0
+                            duration = end_sec - self._current_segment_start
+                            print(f"[VAD] 语音段结束: {self._current_segment_start:.2f}s ~ {end_sec:.2f}s (时长 {duration:.2f}s)")
 
-                    # 处理语音段结束事件
-                    if end_ms != -1 and self._current_segment_start is not None:
-                        end_sec = end_ms / 1000.0
-                        duration = end_sec - self._current_segment_start
-                        print(f"[VAD] 语音段结束: {self._current_segment_start:.2f}s ~ {end_sec:.2f}s (时长 {duration:.2f}s)")
-
-                        # 提取语音段音频
-                        segment_samples = self._extract_segment_samples(
-                            self._current_segment_start,
-                            end_sec
-                        )
-
-                        if segment_samples is not None and len(segment_samples) > 0:
-                            # 创建语音段对象
-                            speech_segment = FSMNSpeechSegment(
-                                samples=segment_samples,
-                                start=self._current_segment_start,
-                                end=end_sec,
-                                sample_rate=self._sample_rate
+                            # 提取语音段音频
+                            segment_samples = self._extract_segment_samples(
+                                self._current_segment_start,
+                                end_sec
                             )
-                            self._completed_segments.append(speech_segment)
 
-                        self._current_segment_start = None
-                        self._current_segment_samples = []
+                            if segment_samples is not None and len(segment_samples) > 0:
+                                # 验证提取的音频长度是否合理
+                                expected_duration = duration
+                                actual_duration = len(segment_samples) / self._sample_rate
+                                if abs(actual_duration - expected_duration) > 0.5:
+                                    print(f"[WARN] 语音段长度不匹配: 预期 {expected_duration:.2f}s, 实际 {actual_duration:.2f}s")
+
+                                # 创建语音段对象
+                                speech_segment = FSMNSpeechSegment(
+                                    samples=segment_samples,
+                                    start=self._current_segment_start,
+                                    end=end_sec,
+                                    sample_rate=self._sample_rate
+                                )
+                                self._completed_segments.append(speech_segment)
+
+                            self._current_segment_start = None
+                            self._current_segment_samples = []
 
     def _prune_buffer(self):
-        """修剪音频缓冲区，只保留最近的数据"""
+        """修剪音频缓冲区，只保留最近的数据（调用前需持有锁）"""
         if len(self._audio_buffer) == 0:
             return
 
@@ -188,7 +193,7 @@ class FSMNVADProcessor:
 
     def _extract_segment_samples(self, start_sec: float, end_sec: float) -> Optional[np.ndarray]:
         """
-        从缓冲区提取指定时间段的音频样本
+        从缓冲区提取指定时间段的音频样本（调用前需持有锁）
 
         Args:
             start_sec: 开始时间（秒）
@@ -224,7 +229,8 @@ class FSMNVADProcessor:
 
     def has_speech_segment(self) -> bool:
         """检查是否有完成的语音段"""
-        return len(self._completed_segments) > 0
+        with self._lock:
+            return len(self._completed_segments) > 0
 
     def get_latest_speech_segment(self) -> Optional[FSMNSpeechSegment]:
         """
@@ -233,66 +239,69 @@ class FSMNVADProcessor:
         Returns:
             语音段对象，如果没有则返回 None
         """
-        if not self._completed_segments:
-            return None
-        return self._completed_segments.pop(0)
+        with self._lock:
+            if not self._completed_segments:
+                return None
+            return self._completed_segments.pop(0)
 
     def flush(self):
         """刷新 VAD 缓冲区，强制输出剩余的语音段"""
-        if self.model is not None and self.param_dict is not None:
-            # 标记为最后一帧
-            self.param_dict["is_final"] = True
+        with self._lock:
+            if self.model is not None and self.param_dict is not None:
+                # 标记为最后一帧
+                self.param_dict["is_final"] = True
 
-            # 处理剩余数据
-            # 使用空数组触发最终处理
-            try:
-                segments = self.model(np.array([], dtype=np.float32), param_dict=self.param_dict)
-                if segments and len(segments) > 0:
-                    for batch_segs in segments:
-                        for seg in batch_segs:
-                            start_ms, end_ms = seg
-                            if end_ms != -1 and self._current_segment_start is not None:
-                                end_sec = end_ms / 1000.0
-                                segment_samples = self._extract_segment_samples(
-                                    self._current_segment_start,
-                                    end_sec
-                                )
-                                if segment_samples is not None and len(segment_samples) > 0:
-                                    speech_segment = FSMNSpeechSegment(
-                                        samples=segment_samples,
-                                        start=self._current_segment_start,
-                                        end=end_sec,
-                                        sample_rate=self._sample_rate
+                # 处理剩余数据
+                # 使用空数组触发最终处理
+                try:
+                    segments = self.model(np.array([], dtype=np.float32), param_dict=self.param_dict)
+                    if segments and len(segments) > 0:
+                        for batch_segs in segments:
+                            for seg in batch_segs:
+                                start_ms, end_ms = seg
+                                if end_ms != -1 and self._current_segment_start is not None:
+                                    end_sec = end_ms / 1000.0
+                                    segment_samples = self._extract_segment_samples(
+                                        self._current_segment_start,
+                                        end_sec
                                     )
-                                    self._completed_segments.append(speech_segment)
-                                self._current_segment_start = None
-            except Exception as e:
-                print(f"[WARN] FSMN-VAD flush 异常: {e}")
+                                    if segment_samples is not None and len(segment_samples) > 0:
+                                        speech_segment = FSMNSpeechSegment(
+                                            samples=segment_samples,
+                                            start=self._current_segment_start,
+                                            end=end_sec,
+                                            sample_rate=self._sample_rate
+                                        )
+                                        self._completed_segments.append(speech_segment)
+                                    self._current_segment_start = None
+                except Exception as e:
+                    print(f"[WARN] FSMN-VAD flush 异常: {e}")
 
-            # 重置 is_final 标志
-            self.param_dict["is_final"] = False
+                # 重置 is_final 标志
+                self.param_dict["is_final"] = False
 
     def reset(self):
         """重置 VAD 状态"""
-        if self.model is not None:
-            # 重新初始化缓存
-            self.param_dict = {
-                "in_cache": [],
-                "is_final": False
-            }
+        with self._lock:
+            if self.model is not None:
+                # 重新初始化缓存
+                self.param_dict = {
+                    "in_cache": [],
+                    "is_final": False
+                }
 
-        # 清空缓冲区和状态
-        self._audio_buffer = []
-        self._accumulated_time = 0.0
-        self._current_segment_start = None
-        self._current_segment_samples = []
-        self._completed_segments = []
+            # 清空缓冲区和状态
+            self._audio_buffer = []
+            self._current_segment_start = None
+            self._current_segment_samples = []
+            self._completed_segments = []
 
     def get_stats(self) -> dict:
         """获取 VAD 统计信息"""
-        return {
-            "status": "initialized" if self.model is not None else "not_initialized",
-            "buffer_size": len(self._audio_buffer),
-            "pending_segments": len(self._completed_segments),
-            "current_segment_active": self._current_segment_start is not None
-        }
+        with self._lock:
+            return {
+                "status": "initialized" if self.model is not None else "not_initialized",
+                "buffer_size": len(self._audio_buffer),
+                "pending_segments": len(self._completed_segments),
+                "current_segment_active": self._current_segment_start is not None
+            }

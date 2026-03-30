@@ -44,13 +44,16 @@ class AudioBuffer:
         self.total_samples = 0
         self.is_filled = False
 
-    def append(self, samples: np.ndarray, timestamp: float) -> int:
+    def append(self, samples: np.ndarray, timestamp: float, timestamp_is_end: bool = True) -> int:
         """
         向缓冲区追加音频数据
 
         Args:
             samples: 音频数据（float32 numpy数组）
-            timestamp: 这批音频最后一个样本对应的时间戳（time.time()）
+            timestamp: 时间戳。默认为这批音频最后一个样本对应的时间戳。
+                       如果 timestamp_is_end=False，则表示第一个样本的时间戳。
+            timestamp_is_end: True 表示 timestamp 是最后一个样本的时间戳，
+                             False 表示 timestamp 是第一个样本的时间戳。
 
         Returns:
             实际写入的样本数
@@ -63,10 +66,17 @@ class AudioBuffer:
                 samples = samples[-self.buffer_size:]
                 num_samples = self.buffer_size
 
-            # 为每个样本计算时间戳：末尾timestamp向前推算
-            # t[i] = timestamp - (num_samples - 1 - i) / sample_rate
+            # 为每个样本计算时间戳
+            # 根据 timestamp_is_end 参数决定如何计算
             offsets = np.arange(num_samples, dtype=np.float64)
-            sample_timestamps = timestamp - (num_samples - 1 - offsets) / self.sample_rate
+            if timestamp_is_end:
+                # timestamp 是最后一个样本的时间戳，向前推算
+                # t[i] = timestamp - (num_samples - 1 - i) / sample_rate
+                sample_timestamps = timestamp - (num_samples - 1 - offsets) / self.sample_rate
+            else:
+                # timestamp 是第一个样本的时间戳，向后推算
+                # t[i] = timestamp + i / sample_rate
+                sample_timestamps = timestamp + offsets / self.sample_rate
 
             # 计算写入位置
             end_index = self.write_index + num_samples
@@ -95,7 +105,7 @@ class AudioBuffer:
 
             return num_samples
 
-    def get_window(self, center_timestamp: float, window_seconds: int = 30) -> Optional[np.ndarray]:
+    def get_window(self, center_timestamp: float, window_seconds: int = 30) -> Optional[Tuple[np.ndarray, float]]:
         """
         获取指定时间戳周围的音频窗口
 
@@ -104,7 +114,8 @@ class AudioBuffer:
             window_seconds: 窗口时长（秒），默认30秒
 
         Returns:
-            音频数据（float32 numpy数组），如果无法获取则返回None
+            (音频数据, 实际中心时间戳) 的元组，如果无法获取则返回 None
+            返回实际中心时间戳用于验证提取的音频位置是否正确
         """
         with self.lock:
             window_samples = window_seconds * self.sample_rate
@@ -123,16 +134,26 @@ class AudioBuffer:
             min_valid_time = np.min(self.timestamps[valid_indices])
             max_valid_time = np.max(self.timestamps[valid_indices])
 
-            if center_timestamp < min_valid_time or center_timestamp > max_valid_time:
-                # 请求的时间戳不在有效范围内
+            # 如果请求的时间戳超出范围，尝试调整到最近的有效时间
+            adjusted_timestamp = center_timestamp
+            if center_timestamp < min_valid_time:
+                adjusted_timestamp = min_valid_time
+            elif center_timestamp > max_valid_time:
+                adjusted_timestamp = max_valid_time
+
+            # 如果调整幅度过大（超过1秒），返回 None
+            if abs(adjusted_timestamp - center_timestamp) > 1.0:
                 return None
 
             # 查找最接近中心时间戳的索引
-            time_diffs = np.abs(self.timestamps - center_timestamp)
+            time_diffs = np.abs(self.timestamps - adjusted_timestamp)
             # 只考虑有效时间戳（时间戳>0的位置）
             valid_mask = self.timestamps > 0
             time_diffs[~valid_mask] = np.inf
             center_idx = np.argmin(time_diffs)
+
+            # 获取实际找到的时间戳
+            actual_center_timestamp = self.timestamps[center_idx]
 
             # 计算窗口的起始和结束索引
             start_idx = center_idx - half_window
@@ -145,7 +166,7 @@ class AudioBuffer:
             if end_idx >= self.buffer_size:
                 end_idx -= self.buffer_size
 
-            # 提取音频数据（如果窗口超出了有效数据范围，会被静音填充）
+            # 提取音频数据
             if start_idx < end_idx:
                 # 不需要回绕
                 result = self.buffer[start_idx:end_idx].copy()
@@ -155,20 +176,14 @@ class AudioBuffer:
                 second_part = self.buffer[:end_idx].copy()
                 result = np.concatenate([first_part, second_part])
 
-            # 将未填充的部分设置为静音（0）
-            # 检查结果中是否包含未初始化的数据（timestamps为0的部分）
-            # 这在缓冲区未满时可能发生
-            if not self.is_filled:
-                # 计算实际有效数据长度
-                actual_length = len(result)
-                # 简单处理：如果缓冲区未满，我们仍然返回数据
-                # 调用者需要意识到可能包含部分静音
+            # 检查提取的数据是否有效（非静音数据比例）
+            # 如果大部分是静音（接近0），可能表示数据不完整
+            non_silent_ratio = np.sum(np.abs(result) > 0.01) / len(result)
+            if non_silent_ratio < 0.1 and not self.is_filled:
+                # 缓冲区未满且大部分是静音，返回 None
+                return None
 
-                # 更好的方法：检查时间戳是否连续
-                # 但为了简单起见，我们信任 VAD 不会在缓冲区未满时触发关键词检测
-                pass
-
-            return result
+            return result, actual_center_timestamp
 
     def get_recent(self, seconds: int = 30) -> Optional[np.ndarray]:
         """
@@ -244,10 +259,12 @@ class AudioBuffer:
         wav_path = output_dir / wav_filename
 
         # 获取30秒音频窗口
-        audio_data = self.get_window(detected_at, window_seconds=30)
+        result = self.get_window(detected_at, window_seconds=30)
 
-        if audio_data is None:
+        if result is None:
             raise RuntimeError("无法从缓冲区获取音频数据")
+
+        audio_data, actual_center_time = result
 
         # 准备元数据
         metadata = None
@@ -255,6 +272,8 @@ class AudioBuffer:
             metadata = {
                 "keyword": keyword,
                 "buffer_time_seconds": detected_at,  # 缓冲区中的相对时间
+                "actual_center_time": actual_center_time,  # 实际提取的中心时间
+                "time_offset": actual_center_time - detected_at,  # 时间偏移量
                 "duration": len(audio_data) / self.sample_rate,
                 "sample_rate": self.sample_rate,
                 "channels": 1,

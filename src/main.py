@@ -215,9 +215,13 @@ class VoiceKeywordDetector:
         self.file_simulator = None
 
         # ASR 处理队列和线程（避免阻塞录音）
-        self._asr_queue = queue.Queue()
+        self._asr_queue = queue.Queue(maxsize=100)  # 限制队列大小，防止内存无限增长
         self._asr_thread = None
         self._asr_thread_running = False
+
+        # 累计音频时间（用于统一时间戳系统）
+        # 从 0 开始，表示从程序启动后经过的音频时长
+        self._audio_time: float = 0.0
 
         # 统计信息
         self.stats = {
@@ -242,9 +246,6 @@ class VoiceKeywordDetector:
         # 状态心跳相关
         self._last_activity_time: float = None
         self._heartbeat_interval: float = 10.0
-
-        # 模拟时间偏移（用于文件模拟模式）
-        self._simulated_time_offset: float = 0
 
         # 设置信号处理器
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -325,34 +326,34 @@ class VoiceKeywordDetector:
             self._asr_thread = None
         print("[INFO] ASR 处理线程已停止")
 
-    def process_audio_chunk(self, raw_data: bytes, use_simulated_time: bool = False):
+    def process_audio_chunk(self, raw_data: bytes):
         """
         处理音频数据块（轻量级，不阻塞）
 
         Args:
             raw_data: 原始PCM音频数据（int16）
-            use_simulated_time: 是否使用模拟时间（文件模式）
         """
         # 转换音频格式
         samples = pcm_int16_to_float32(raw_data)
         current_real_time = time.time()
 
-        # 计算时间戳：统一使用相对时间（从程序开始计算的秒数）
-        # 文件模式和实时模式都使用相同的时间系统
+        # 计算当前块的时长
         chunk_duration = len(raw_data) / 2 / self.config.sample_rate  # 字节数/2 = 样本数
 
-        if self._simulated_time_offset == 0:
-            # 第一次调用，初始化时间偏移
-            self._simulated_time_offset = current_real_time
-
-        # 计算当前块的结束时间戳（相对时间，从0开始）
-        timestamp_for_buffer = current_real_time - self._simulated_time_offset
+        # 使用统一的音频时间系统（从 0 开始）
+        # 当前块的结束时间戳
+        chunk_end_time = self._audio_time + chunk_duration
 
         # 1. 将音频数据添加到循环缓冲区
-        self.audio_buffer.append(samples, timestamp_for_buffer)
+        # 使用 chunk_end_time 作为时间戳（最后一个样本的时间）
+        self.audio_buffer.append(samples, chunk_end_time, timestamp_is_end=True)
 
-        # 2. VAD处理（传递时间戳用于FSMN-VAD）
-        self.vad_processor.process(samples, timestamp=timestamp_for_buffer)
+        # 2. VAD处理（传递当前块的开始时间戳）
+        chunk_start_time = self._audio_time
+        self.vad_processor.process(samples, timestamp=chunk_start_time)
+
+        # 更新累计音频时间
+        self._audio_time += chunk_duration
 
         # 3. 获取检测到的语音段，放入 ASR 队列
         while True:
@@ -366,12 +367,25 @@ class VoiceKeywordDetector:
             self._last_activity_time = current_real_time
 
             # 将语音段放入 ASR 队列（异步处理，不阻塞）
-            # 传递：samples, buffer时间戳, 当前实际时间
-            self._asr_queue.put((
-                speech_segment.samples,
-                speech_segment.start,  # buffer中的相对时间
-                current_real_time      # 实际时间（用于保存文件名）
-            ))
+            # 如果队列已满，丢弃最旧的语音段
+            try:
+                self._asr_queue.put_nowait((
+                    speech_segment.samples,
+                    speech_segment.start,  # buffer中的相对时间
+                    current_real_time      # 实际时间（用于保存文件名）
+                ))
+            except queue.Full:
+                # 队列已满，丢弃最旧的语音段
+                try:
+                    self._asr_queue.get_nowait()
+                    self._asr_queue.put_nowait((
+                        speech_segment.samples,
+                        speech_segment.start,
+                        current_real_time
+                    ))
+                    print("[WARN] ASR队列已满，丢弃旧的语音段")
+                except queue.Empty:
+                    pass
 
         # 4. 更新最后活动时间（用于心跳检测）
         self._last_chunk_time = current_real_time
@@ -392,8 +406,10 @@ class VoiceKeywordDetector:
             buf_stats = self.audio_buffer.get_stats()
             status = "● 录音正常" if buf_stats["is_filled"] else "○ 等待缓冲区填满"
             queue_size = self._asr_queue.qsize()
+            audio_time_str = f"{self._audio_time:.0f}s"
             print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                   f"[{elapsed:.0f}s] {status} | "
+                  f"音频时间: {audio_time_str} | "
                   f"语音段: {seg_count} | 识别: {asr_count} | "
                   f"关键词: {kw_count} | ASR队列: {queue_size}")
             self._last_activity_time = current_real_time
@@ -461,17 +477,15 @@ class VoiceKeywordDetector:
                 )
                 self.file_simulator.start()
                 audio_source = self.file_simulator
-                use_simulated_time = True
             else:
                 from .audio_recorder import AudioRecorder
                 self.audio_recorder = AudioRecorder()
                 self.audio_recorder.start()
                 audio_source = self.audio_recorder
-                use_simulated_time = False
 
-            # 重置 VAD，确保时间系统与 AudioBuffer 同步（都从 0 开始）
+            # 重置 VAD 和时间系统
             self.vad_processor.reset()
-            self._simulated_time_offset = 0  # 重置时间偏移量
+            self._audio_time = 0.0  # 重置音频时间
 
             # 启动 ASR 处理线程
             self._start_asr_thread()
@@ -495,7 +509,7 @@ class VoiceKeywordDetector:
                     break
 
                 # 处理音频（轻量级，不阻塞）
-                self.process_audio_chunk(raw_data, use_simulated_time=use_simulated_time)
+                self.process_audio_chunk(raw_data)
 
         except KeyboardInterrupt:
             print("\n[INFO] 收到键盘中断信号")
