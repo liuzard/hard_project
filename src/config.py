@@ -33,6 +33,10 @@ class Config:
         config['vad']['model_path'] = Path(config['vad']['model_path'])
         config['output']['directory'] = Path(config['output']['directory'])
 
+        # 处理 FSMN-VAD 配置路径
+        if 'fsmn_vad' in config['vad'] and 'model_dir' in config['vad']['fsmn_vad']:
+            config['vad']['fsmn_vad']['model_dir'] = Path(config['vad']['fsmn_vad']['model_dir'])
+
         # 处理ASR配置：支持新旧两种格式
         # 新格式：model_dir 在 models 下面
         # 旧格式：model_dir 直接在 asr 下面
@@ -54,6 +58,11 @@ class Config:
         config_copy = self._config.copy()
         config_copy['vad']['model_path'] = str(config_copy['vad']['model_path'])
         config_copy['output']['directory'] = str(config_copy['output']['directory'])
+
+        # 处理 FSMN-VAD 配置路径转换
+        if 'fsmn_vad' in config_copy['vad'] and 'model_dir' in config_copy['vad']['fsmn_vad']:
+            if isinstance(config_copy['vad']['fsmn_vad']['model_dir'], Path):
+                config_copy['vad']['fsmn_vad']['model_dir'] = str(config_copy['vad']['fsmn_vad']['model_dir'])
 
         # 处理ASR配置路径转换
         if 'models' in config_copy['asr']:
@@ -132,6 +141,31 @@ class Config:
     def vad_window_size(self) -> int:
         """VAD窗口大小"""
         return self._config['vad'].get('window_size', 512)
+
+    @property
+    def vad_model_type(self) -> str:
+        """VAD模型类型（silero_vad, fsmn_vad）"""
+        return self._config['vad'].get('model_type', 'silero_vad')
+
+    @property
+    def fsmn_vad_model_dir(self) -> Path:
+        """FSMN-VAD模型目录"""
+        return self._config['vad'].get('fsmn_vad', {}).get('model_dir', Path('./models/01-vad/speech_fsmn_vad_zh-cn-16k-common-onnx'))
+
+    @property
+    def fsmn_vad_quantize(self) -> bool:
+        """FSMN-VAD是否使用量化模型"""
+        return self._config['vad'].get('fsmn_vad', {}).get('quantize', True)
+
+    @property
+    def fsmn_vad_max_end_sil(self) -> int:
+        """FSMN-VAD最大结尾静音时长（毫秒）"""
+        return self._config['vad'].get('fsmn_vad', {}).get('max_end_sil', 800)
+
+    @property
+    def fsmn_vad_num_threads(self) -> int:
+        """FSMN-VAD线程数"""
+        return self._config['vad'].get('fsmn_vad', {}).get('intra_op_num_threads', 4)
 
     @property
     def asr_model_type(self) -> str:
@@ -232,9 +266,21 @@ class Config:
         """验证配置是否有效"""
         errors = []
 
-        # 检查模型文件是否存在
-        if not self.vad_model_path.exists():
-            errors.append(f"VAD模型文件不存在: {self.vad_model_path}")
+        # 根据VAD模型类型检查模型文件
+        vad_type = self.vad_model_type.lower()
+        if vad_type == "fsmn_vad":
+            # FSMN-VAD 检查模型目录
+            if not self.fsmn_vad_model_dir.exists():
+                errors.append(f"FSMN-VAD模型目录不存在: {self.fsmn_vad_model_dir}")
+            else:
+                # 检查模型文件
+                model_file = self.fsmn_vad_model_dir / "model_quant.onnx" if self.fsmn_vad_quantize else self.fsmn_vad_model_dir / "model.onnx"
+                if not model_file.exists():
+                    errors.append(f"FSMN-VAD模型文件不存在: {model_file}")
+        else:
+            # Silero VAD 检查模型文件
+            if not self.vad_model_path.exists():
+                errors.append(f"VAD模型文件不存在: {self.vad_model_path}")
 
         # 根据模型类型检查 ASR 模型文件
         model_type = self.asr_model_type.lower()

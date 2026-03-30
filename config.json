@@ -7,13 +7,20 @@
     "format": "paInt16"
   },
   "vad": {
+    "model_type": "fsmn_vad",
     "model_path": "./models/01-vad/silero_vad.onnx",
     "threshold": 0.3,
     "min_silence_duration": 0.6,
     "min_speech_duration": 0.25,
     "buffer_size_seconds": 60,
     "num_threads": 2,
-    "window_size": 512
+    "window_size": 512,
+    "fsmn_vad": {
+      "model_dir": "./models/01-vad/speech_fsmn_vad_zh-cn-16k-common-onnx",
+      "quantize": true,
+      "max_end_sil": 800,
+      "intra_op_num_threads": 2
+    }
   },
   "asr": {
     "model_type": "paraformer-zh",

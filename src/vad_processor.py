@@ -1,12 +1,12 @@
 """
 VAD（语音活动检测）处理模块
-使用 Silero VAD v6 模型进行语音活动检测
+支持多种 VAD 模型：Silero VAD v6 和 FSMN-VAD
 """
 
 import sherpa_onnx
 import numpy as np
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 from .config import get_config
 
 
@@ -39,17 +39,26 @@ class SpeechSegmentWrapper:
 
 
 class VADProcessor:
-    """VAD处理器"""
+    """VAD处理器，支持多种模型"""
 
     def __init__(self):
         """初始化VAD处理器"""
         self.config = get_config()
         self.vad = None
+        self._fsmn_vad = None
+        self._model_type = self.config.vad_model_type.lower()
         self._init_vad()
 
     def _init_vad(self):
         """初始化VAD模型"""
-        print("[INFO] 正在加载VAD模型...")
+        if self._model_type == "fsmn_vad":
+            self._init_fsmn_vad()
+        else:
+            self._init_silero_vad()
+
+    def _init_silero_vad(self):
+        """初始化 Silero VAD 模型"""
+        print("[INFO] 正在加载 VAD 模型 (Silero VAD)...")
 
         # 验证模型文件存在
         if not self.config.vad_model_path.exists():
@@ -83,16 +92,29 @@ class VADProcessor:
         print(f"       - 最小语音时长: {self.config.vad_min_speech_duration}s")
         print(f"       - 缓冲区大小: {self.config.vad_buffer_size_seconds}s")
 
-    def process(self, samples: np.ndarray) -> bool:
+    def _init_fsmn_vad(self):
+        """初始化 FSMN-VAD 模型"""
+        from .fsmn_vad_processor import FSMNVADProcessor
+        self._fsmn_vad = FSMNVADProcessor()
+
+    def process(self, samples: np.ndarray, timestamp: float = None) -> bool:
         """
         处理音频数据，检测是否有语音活动
 
         Args:
             samples: 音频数据（float32 numpy数组，归一化到[-1, 1]）
+            timestamp: 当前音频块的时间戳（秒），仅 FSMN-VAD 使用
 
         Returns:
             True表示检测到语音，False表示没有语音
         """
+        if self._model_type == "fsmn_vad":
+            return self._process_fsmn(samples, timestamp)
+        else:
+            return self._process_silero(samples)
+
+    def _process_silero(self, samples: np.ndarray) -> bool:
+        """使用 Silero VAD 处理音频"""
         if self.vad is None:
             return False
 
@@ -102,6 +124,14 @@ class VADProcessor:
         # 检查是否有语音段
         return not self.vad.empty()
 
+    def _process_fsmn(self, samples: np.ndarray, timestamp: float = None) -> bool:
+        """使用 FSMN-VAD 处理音频"""
+        if self._fsmn_vad is None:
+            return False
+
+        self._fsmn_vad.process(samples, timestamp)
+        return self._fsmn_vad.has_speech_segment()
+
     def get_speech_segments(self) -> list:
         """
         获取所有检测到的语音段
@@ -109,50 +139,77 @@ class VADProcessor:
         Returns:
             语音段列表
         """
-        if self.vad is None:
-            return []
+        if self._model_type == "fsmn_vad":
+            segments = []
+            while self._fsmn_vad.has_speech_segment():
+                seg = self._fsmn_vad.get_latest_speech_segment()
+                if seg:
+                    segments.append(seg)
+            return segments
+        else:
+            if self.vad is None:
+                return []
 
-        segments = []
-        while not self.vad.empty():
-            speech_segment = self.vad.front
-            segments.append(speech_segment)
-            self.vad.pop()
+            segments = []
+            while not self.vad.empty():
+                speech_segment = self.vad.front
+                segments.append(speech_segment)
+                self.vad.pop()
 
-        return segments
+            return segments
 
-    def get_latest_speech_segment(self) -> Optional['SpeechSegmentWrapper']:
+    def get_latest_speech_segment(self) -> Optional[Union['SpeechSegmentWrapper', 'FSMNSpeechSegment']]:
         """
         获取最新的语音段
 
         Returns:
-            语音段对象（包装器），如果没有则返回None
+            语音段对象，如果没有则返回None
         """
-        if self.vad is None or self.vad.empty():
-            return None
+        if self._model_type == "fsmn_vad":
+            return self._fsmn_vad.get_latest_speech_segment()
+        else:
+            if self.vad is None or self.vad.empty():
+                return None
 
-        speech_segment = self.vad.front
-        # 在 pop 之前创建包装器，复制 samples 数据
-        wrapper = SpeechSegmentWrapper(speech_segment, sample_rate=self.config.sample_rate)
-        self.vad.pop()
-        return wrapper
+            speech_segment = self.vad.front
+            # 在 pop 之前创建包装器，复制 samples 数据
+            wrapper = SpeechSegmentWrapper(speech_segment, sample_rate=self.config.sample_rate)
+            self.vad.pop()
+            return wrapper
 
     def flush(self):
         """刷新VAD缓冲区，强制输出剩余的语音段"""
-        if self.vad is not None:
-            self.vad.flush()
+        if self._model_type == "fsmn_vad":
+            if self._fsmn_vad is not None:
+                self._fsmn_vad.flush()
+        else:
+            if self.vad is not None:
+                self.vad.flush()
 
     def reset(self):
         """重置VAD状态"""
-        if self.vad is not None:
-            self.vad.reset()
+        if self._model_type == "fsmn_vad":
+            if self._fsmn_vad is not None:
+                self._fsmn_vad.reset()
+        else:
+            if self.vad is not None:
+                self.vad.reset()
 
     def get_stats(self) -> dict:
         """获取VAD统计信息"""
-        if self.vad is None:
-            return {"status": "not_initialized"}
+        if self._model_type == "fsmn_vad":
+            if self._fsmn_vad is None:
+                return {"status": "not_initialized", "model_type": "fsmn_vad"}
+            stats = self._fsmn_vad.get_stats()
+            stats["model_type"] = "fsmn_vad"
+            return stats
+        else:
+            if self.vad is None:
+                return {"status": "not_initialized", "model_type": "silero_vad"}
 
-        return {
-            "status": "initialized",
-            "is_empty": self.vad.empty(),
-            "buffer_size_seconds": self.config.vad_buffer_size_seconds
-        }
+            return {
+                "status": "initialized",
+                "model_type": "silero_vad",
+                "is_empty": self.vad.empty(),
+                "buffer_size_seconds": self.config.vad_buffer_size_seconds
+            }

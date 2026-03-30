@@ -344,8 +344,8 @@ class VoiceKeywordDetector:
         # 1. 将音频数据添加到循环缓冲区
         self.audio_buffer.append(samples, timestamp_for_buffer)
 
-        # 2. VAD处理
-        self.vad_processor.process(samples)
+        # 2. VAD处理（传递时间戳用于FSMN-VAD）
+        self.vad_processor.process(samples, timestamp=timestamp_for_buffer)
 
         # 3. 获取检测到的语音段，放入 ASR 队列
         while True:
