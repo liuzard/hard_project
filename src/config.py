@@ -258,6 +258,39 @@ class Config:
         """是否启用控制台日志"""
         return self._config['logging']['console']
 
+    @property
+    def upload_enabled(self) -> bool:
+        """是否启用上传功能"""
+        return self._config.get('upload', {}).get('enabled', False)
+
+    @property
+    def upload_api_url(self) -> str:
+        """上传接口地址"""
+        return self._config.get('upload', {}).get(
+            'api_url',
+            'http://118.195.132.62:18098/audio/upload/file'
+        )
+
+    @property
+    def upload_text_content(self) -> str:
+        """上传时的文字内容"""
+        return self._config.get('upload', {}).get('text_content', '疑似发生霸凌')
+
+    @property
+    def upload_audio_type(self) -> str:
+        """上传时的音频类型"""
+        return self._config.get('upload', {}).get('audio_type', 'bully')
+
+    @property
+    def upload_max_retries(self) -> int:
+        """上传最大重试次数"""
+        return self._config.get('upload', {}).get('max_retries', 3)
+
+    @property
+    def upload_timeout(self) -> int:
+        """上传超时时间（秒）"""
+        return self._config.get('upload', {}).get('timeout', 30)
+
     def get_audio_buffer_duration(self) -> int:
         """获取音频缓冲区总时长（秒）"""
         return self.buffer_seconds * 2

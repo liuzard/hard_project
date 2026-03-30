@@ -21,6 +21,7 @@ from .audio_buffer import AudioBuffer
 from .vad_processor import VADProcessor
 from .asr_processor import ASRProcessor
 from .keyword_detector import KeywordDetector
+from .audio_uploader import AudioUploader
 
 
 def pcm_int16_to_float32(data: bytes) -> 'np.ndarray':
@@ -208,6 +209,12 @@ class VoiceKeywordDetector:
         self.asr_processor = ASRProcessor()
         self.keyword_detector = KeywordDetector()
 
+        # 音频上传器
+        self.audio_uploader = None
+        if self.config.upload_enabled:
+            self.audio_uploader = AudioUploader(api_url=self.config.upload_api_url)
+            print(f"[INFO] 音频上传已启用: {self.config.upload_api_url}")
+
         # 音频源配置
         self.audio_file = audio_file
         self.fast_mode = fast_mode
@@ -291,7 +298,7 @@ class VoiceKeywordDetector:
                     matched_keyword = self.keyword_detector.detect(text)
                     if matched_keyword:
                         # 使用 buffer_timestamp 作为检测时间（用于从缓冲区提取音频）
-                        self._handle_keyword_detection(matched_keyword, buffer_timestamp)
+                        self._handle_keyword_detection(matched_keyword, buffer_timestamp, text)
                 else:
                     print(f"[{timestamp}] 🔊 检测到语音 ({duration:.1f}s) - 无法识别文字")
 
@@ -414,13 +421,14 @@ class VoiceKeywordDetector:
                   f"关键词: {kw_count} | ASR队列: {queue_size}")
             self._last_activity_time = current_real_time
 
-    def _handle_keyword_detection(self, keyword: str, buffer_time: float):
+    def _handle_keyword_detection(self, keyword: str, buffer_time: float, asr_text: str = ""):
         """
         处理关键词检测事件
 
         Args:
             keyword: 检测到的关键词
             buffer_time: 缓冲区中的相对时间（秒），用于提取音频
+            asr_text: ASR识别的文本内容
         """
         with self._stats_lock:
             self.stats["total_keywords_detected"] += 1
@@ -450,10 +458,56 @@ class VoiceKeywordDetector:
             print(f"    音频已保存: {wav_path.name}")
             if meta_path:
                 print(f"    元数据已保存: {meta_path.name}")
+
+            # 上传音频文件
+            if self.audio_uploader is not None:
+                self._upload_audio(wav_path, asr_text)
+
             print()
 
         except Exception as e:
             print(f"    [ERROR] 保存音频片段失败: {e}\n")
+
+    def _upload_audio(self, wav_path: Path, asr_text: str = ""):
+        """
+        上传音频文件到服务器
+
+        Args:
+            wav_path: 音频文件路径
+            asr_text: ASR识别的文本内容
+        """
+        print(f"    正在上传音频...")
+
+        # 计算音频时长
+        import wave
+        try:
+            with wave.open(str(wav_path), 'rb') as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate()
+                duration = int(frames / rate)
+        except Exception:
+            duration = 30  # 默认30秒
+
+        # 使用配置的文本内容，如果有ASR识别结果则附加
+        text_content = self.config.upload_text_content
+        if asr_text:
+            text_content = f"{text_content}，识别内容：{asr_text}"
+
+        # 执行上传（带重试）
+        result = self.audio_uploader.upload_with_retry(
+            audio_path=wav_path,
+            text_content=text_content,
+            audio_type=self.config.upload_audio_type,
+            duration=duration,
+            max_retries=self.config.upload_max_retries
+        )
+
+        if result.success:
+            print(f"    上传成功: audioId={result.audio_id}")
+            if result.audio_url:
+                print(f"    音频URL: {result.audio_url}")
+        else:
+            print(f"    上传失败: {result.error}")
 
     def start(self):
         """启动系统"""
@@ -561,7 +615,7 @@ class VoiceKeywordDetector:
                 matched_keyword = self.keyword_detector.detect(text)
                 if matched_keyword:
                     # 使用语音段自己的时间戳（相对于缓冲区开始时间）
-                    self._handle_keyword_detection(matched_keyword, speech_segment.start)
+                    self._handle_keyword_detection(matched_keyword, speech_segment.start, text)
 
         # 打印统计信息
         if not self._in_signal_handler and self.stats["start_time"]:
