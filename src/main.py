@@ -314,7 +314,14 @@ class VoiceKeywordDetector:
         # 放入 None 作为结束信号
         self._asr_queue.put(None)
         if self._asr_thread:
-            self._asr_thread.join(timeout=3.0)
+            # 等待 ASR 线程处理完队列中的所有语音段
+            # 使用更长的超时时间，确保所有语音段都被处理
+            queue_size = self._asr_queue.qsize()
+            if queue_size > 0:
+                print(f"[INFO] 等待 ASR 处理剩余 {queue_size} 个语音段...")
+            self._asr_thread.join(timeout=300.0)  # 最多等待5分钟
+            if self._asr_thread.is_alive():
+                print("[WARN] ASR 线程未能及时停止")
             self._asr_thread = None
         print("[INFO] ASR 处理线程已停止")
 
